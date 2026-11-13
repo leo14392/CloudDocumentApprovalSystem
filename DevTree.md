@@ -1,6 +1,6 @@
 # File Tree: CloudDocumentApprovalSystem
 
-**Generated:** 11/12/2026, 9:59:24 PM
+**Generated:** 11/13/2026, 6:28:55 PM
 **Root Path:** `c:\Users\HP\Desktop\CloudDocumentApprovalSystem`
 
 ```
@@ -15,9 +15,69 @@
 │       ├── 📄 install
 │       ├── 📄 langserver
 │       └── ⚙️ site.json
+├── 📁 backend
+│   ├── 📁 src
+│   │   ├── 📁 config
+│   │   │   └── 📄 database.ts
+│   │   ├── 📁 controllers
+│   │   │   └── 📄 auth.controller.ts
+│   │   ├── 📁 middleware
+│   │   │   └── 📄 auth.middleware.ts
+│   │   ├── 📁 routes
+│   │   │   └── 📄 auth.routes.ts
+│   │   ├── 📁 scripts
+│   │   │   └── 📄 create-admin.ts
+│   │   ├── 📁 services
+│   │   │   └── 📄 auth.service.ts
+│   │   ├── 📁 types
+│   │   │   ├── 📄 auth.ts
+│   │   │   └── 📄 express-session.d.ts
+│   │   └── 📄 server.ts
+│   ├── ⚙️ package.json
+│   ├── ⚙️ pnpm-lock.yaml
+│   ├── ⚙️ pnpm-workspace.yaml
+│   └── ⚙️ tsconfig.json
+├── 📁 database
+│   ├── 📁 backups
+│   │   └── 📄 cloud_document_approval_2026-11-13.backup
+│   ├── 📁 migrations
+│   └── 📁 seeds
 ├── 📁 public
 │   └── 🖼️ favicon.svg
 ├── 📁 src
+│   ├── 📁 components
+│   │   ├── 📁 layout
+│   │   │   └── 📄 AppShell.tsx
+│   │   ├── 📁 requests
+│   │   │   └── 📄 RequestTable.tsx
+│   │   └── 📄 ui.tsx
+│   ├── 📁 data
+│   │   └── 📄 initialData.ts
+│   ├── 📁 lib
+│   │   └── 📄 auth.ts
+│   ├── 📁 pages
+│   │   ├── 📁 account
+│   │   │   └── 📄 AccountPages.tsx
+│   │   ├── 📁 auth
+│   │   │   └── 📄 LoginPage.tsx
+│   │   ├── 📁 dashboard
+│   │   │   └── 📄 DashboardPages.tsx
+│   │   ├── 📁 requests
+│   │   │   ├── 📁 permit
+│   │   │   │   ├── 📄 LoadRevisionForm.tsx
+│   │   │   │   ├── 📄 PermitProgress.tsx
+│   │   │   │   └── 📄 SubjectEditor.tsx
+│   │   │   ├── 📄 GenericRequestForm.tsx
+│   │   │   ├── 📄 NewRequest.tsx
+│   │   │   ├── 📄 RequestDetailPage.tsx
+│   │   │   ├── 📄 RequestForm.tsx
+│   │   │   ├── 📄 RequestListPage.tsx
+│   │   │   ├── 📄 RequestPages.tsx
+│   │   │   └── 📄 SubmissionSuccess.tsx
+│   │   └── 📁 review
+│   │       └── 📄 ReviewPage.tsx
+│   ├── 📁 types
+│   │   └── 📄 index.ts
 │   ├── 📄 App.tsx
 │   ├── 🎨 index.css
 │   ├── 📄 main.tsx
@@ -28,7 +88,9 @@
 ├── ⚙️ .mise.toml
 ├── 📝 AGENTS.md
 ├── 📝 CLAUDE.md
+├── 📝 DevTree.md
 ├── 🌐 index.html
+├── ⚙️ package-lock.json
 ├── ⚙️ package.json
 ├── ⚙️ pnpm-lock.yaml
 ├── ⚙️ tsconfig.json
