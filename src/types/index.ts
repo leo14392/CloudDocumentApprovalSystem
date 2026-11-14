@@ -1,3 +1,15 @@
+export type AppRole =
+  | "STUDENT"
+  | "ADVISER"
+  | "CHAIRPERSON"
+  | "DEAN"
+  | "REGISTRAR"
+  | "ADMIN"
+  | "WITHDRAW_CONTROLLER"
+  | "WITHDRAW_PROFESSOR"
+  | "ADD_CONTROLLER"
+  | "CLOSED_SUBJECT_INSTRUCTOR";
+
 export type Role = "student" | "approver";
 export type Page =
   | "login"

@@ -1,3 +1,4 @@
+
 import argon2 from "argon2";
 import { pool } from "../config/database.js";
 import type { AuthenticatedUser } from "../types/auth.js";
@@ -16,9 +17,9 @@ export async function authenticateUser(
       u.user_id::text AS id,
       u.email,
       u.password_hash AS "passwordHash",
-      u.first_name AS "firstName",
+      u.given_name AS "givenName",
       u.middle_name AS "middleName",
-      u.last_name AS "lastName",
+      u.family_name AS "familyName",
       COALESCE(
         array_agg(r.role_code)
           FILTER (WHERE r.role_code IS NOT NULL),
@@ -60,9 +61,9 @@ export async function authenticateUser(
   return {
     id: account.id,
     email: account.email,
-    firstName: account.firstName,
+    givenName: account.givenName,
     middleName: account.middleName,
-    lastName: account.lastName,
+    familyName: account.familyName,
     roles: account.roles
   };
 }

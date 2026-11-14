@@ -6,9 +6,9 @@ const API_BASE_URL = (
 export interface AuthenticatedUser {
   id: string;
   email: string;
-  firstName: string;
+  givenName: string;
   middleName: string | null;
-  lastName: string;
+  familyName: string;
   roles: string[];
 }
 
@@ -18,7 +18,7 @@ interface ApiResponse<T> {
   user: T;
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(message: string, public status: number) {
     super(message);
     this.name = "ApiError";
@@ -29,14 +29,22 @@ async function apiRequest<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}/api${path}`, {
-    ...options,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers
-    }
-  });
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_BASE_URL}/api${path}`, {
+      ...options,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  } catch {
+    throw new Error(
+      "Cannot connect to the server. Check that the backend is running."
+    );
+  }
 
   const data = await response.json().catch(() => ({}));
 
@@ -58,7 +66,7 @@ export async function loginApi(
     "/auth/login",
     {
       method: "POST",
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email, password }),
     }
   );
 
@@ -82,7 +90,7 @@ export async function getCurrentUser(): Promise<AuthenticatedUser | null> {
 }
 
 export async function logoutApi(): Promise<void> {
-  await apiRequest("/auth/logout", {
-    method: "POST"
+  await apiRequest<{ success: boolean }>("/auth/logout", {
+    method: "POST",
   });
 }

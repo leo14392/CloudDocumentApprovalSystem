@@ -1,6 +1,16 @@
 import { useState, type ReactNode } from "react";
 import type { Page, Role } from "../../types";
+import type { AuthenticatedUser } from "../../lib/auth";
 import { Icon, Logo } from "../ui";
+
+interface SidebarProps {
+  role: Role;
+  page: Page;
+  navigate: (page: Page) => void;
+  open: boolean;
+  close: () => void;
+  onLogout: () => void;
+}
 
 const studentNav = [
   ["dashboard", "grid", "Dashboard"],
@@ -9,6 +19,7 @@ const studentNav = [
   ["notifications", "bell", "Notifications"],
   ["settings", "settings", "Profile & Settings"],
 ];
+
 const approverNav = [
   ["dashboard", "grid", "Dashboard"],
   ["requests", "clock", "Pending Approvals"],
@@ -18,31 +29,158 @@ const approverNav = [
   ["settings", "settings", "Profile & Settings"],
 ];
 
-export function Sidebar({ role, page, navigate, open, close }: { role: Role; page: Page; navigate: (p: Page) => void; open: boolean; close: () => void }) {
-  const nav = role === "student" ? studentNav : approverNav;
-  return <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
-    <div className="sidebar-head"><Logo light/><button className="mobile-close" onClick={close} aria-label="Close menu"><Icon name="x"/></button></div>
-    <div className="role-label">{role === "student" ? "Student Portal" : "Approver Workspace"}</div>
-    <nav>{nav.map(([target, icon, label], i) => <button key={`${label}-${i}`} className={(page === target && !(i === 2 && role === "approver")) ? "nav-active" : ""} onClick={() => { navigate(target as Page); close(); }}><Icon name={icon}/><span>{label}</span>{label === "Notifications" && <em>3</em>}</button>)}</nav>
-    <div className="sidebar-support"><div className="support-icon">?</div><strong>Need help?</strong><p>Visit the service guide or contact ICTC support.</p><button>View support center <Icon name="arrow" size={14}/></button></div>
-    <button className="signout" onClick={() => navigate("login")}><Icon name="logout"/><span>Sign out</span></button>
-  </aside>;
+function getInitials(user: AuthenticatedUser) {
+  const first = user.givenName?.trim().charAt(0) || "";
+  const last = user.familyName?.trim().charAt(0) || "";
+
+  return (first + last).toUpperCase() || "U";
 }
-export function Shell({ children, role, page, navigate, title, subtitle }: { children: ReactNode; role: Role; page: Page; navigate: (p: Page) => void; title: string; subtitle: string }) {
+
+function getDisplayName(user: AuthenticatedUser) {
+  return [user.givenName, user.middleName, user.familyName]
+    .filter(Boolean)
+    .join(" ");
+}
+
+export function Sidebar({
+  role,
+  page,
+  navigate,
+  open,
+  close,
+  onLogout,
+}: SidebarProps) {
+  const nav = role === "student" ? studentNav : approverNav;
+
+  return (
+    <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
+      <div className="sidebar-head">
+        <Logo light />
+        <button
+          className="mobile-close"
+          onClick={close}
+          aria-label="Close menu"
+        >
+          <Icon name="x" />
+        </button>
+      </div>
+
+      <div className="role-label">
+        {role === "student" ? "Student Portal" : "Approver Workspace"}
+      </div>
+
+      <nav>
+        {nav.map(([target, icon, label], i) => (
+          <button
+            key={`${label}-${i}`}
+            className={
+              page === target && !(i === 2 && role === "approver")
+                ? "nav-active"
+                : ""
+            }
+            onClick={() => {
+              navigate(target as Page);
+              close();
+            }}
+          >
+            <Icon name={icon} />
+            <span>{label}</span>
+            {label === "Notifications" && <em>3</em>}
+          </button>
+        ))}
+      </nav>
+
+      <div className="sidebar-support">
+        <div className="support-icon">?</div>
+        <strong>Need help?</strong>
+        <p>Visit the service guide or contact ICTC support.</p>
+        <button>
+          View support center <Icon name="arrow" size={14} />
+        </button>
+      </div>
+
+      <button className="signout" onClick={onLogout}>
+        <Icon name="logout" />
+        <span>Sign out</span>
+      </button>
+    </aside>
+  );
+}
+
+interface ShellProps {
+  children: ReactNode;
+  role: Role;
+  user: AuthenticatedUser;
+  page: Page;
+  navigate: (page: Page) => void;
+  onLogout: () => void;
+  title: string;
+  subtitle: string;
+}
+
+export function Shell({
+  children,
+  role,
+  user,
+  page,
+  navigate,
+  onLogout,
+  title,
+  subtitle,
+}: ShellProps) {
   const [menu, setMenu] = useState(false);
-  return <div className="app-shell">
-    <Sidebar role={role} page={page} navigate={navigate} open={menu} close={() => setMenu(false)}/>
-    {menu && <div className="scrim" onClick={() => setMenu(false)}/>}
-    <main className="main">
-      <header className="topbar">
-        <button className="menu-btn" onClick={() => setMenu(true)} aria-label="Open menu"><Icon name="menu"/></button>
-        <div className="page-heading"><h1>{title}</h1><p>{subtitle}</p></div>
-        <div className="top-actions">
-          <button className="icon-btn" onClick={() => navigate("notifications")} aria-label="Notifications"><Icon name="bell"/><i/></button>
-          <div className="profile"><div className="avatar">{role === "student" ? "AS" : "EV"}</div><div><strong>{role === "student" ? "Andrea Santos" : "Dr. Elena Villanueva"}</strong><small>{role === "student" ? "BS Information Technology" : "Department Chair"}</small></div><Icon name="chevron" size={15}/></div>
-        </div>
-      </header>
-      <div className="content">{children}</div>
-    </main>
-  </div>;
+
+  return (
+    <div className="app-shell">
+      <Sidebar
+        role={role}
+        page={page}
+        navigate={navigate}
+        open={menu}
+        close={() => setMenu(false)}
+        onLogout={onLogout}
+      />
+
+      {menu && <div className="scrim" onClick={() => setMenu(false)} />}
+
+      <main className="main">
+        <header className="topbar">
+          <button
+            className="menu-btn"
+            onClick={() => setMenu(true)}
+            aria-label="Open menu"
+          >
+            <Icon name="menu" />
+          </button>
+
+          <div className="page-heading">
+            <h1>{title}</h1>
+            <p>{subtitle}</p>
+          </div>
+
+          <div className="top-actions">
+            <button
+              className="icon-btn"
+              onClick={() => navigate("notifications")}
+              aria-label="Notifications"
+            >
+              <Icon name="bell" />
+              <i />
+            </button>
+
+            <div className="profile">
+              <div className="avatar">{getInitials(user)}</div>
+              <div>
+                <strong>{getDisplayName(user)}</strong>
+                <small>{user.email}</small>
+              </div>
+              <Icon name="chevron" size={15} />
+            </div>
+          </div>
+        </header>
+
+        <div className="content">{children}</div>
+      </main>
+    </div>
+  );
 }

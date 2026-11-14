@@ -1,8 +1,8 @@
 export interface AuthenticatedUser {
   id: string;
   email: string;
-  firstName: string;
+  givenName: string;
   middleName: string | null;
-  lastName: string;
+  familyName: string;
   roles: string[];
 }

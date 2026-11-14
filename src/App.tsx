@@ -1,10 +1,10 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
-  AuthenticatedUser,
   getCurrentUser,
   loginApi,
   logoutApi,
+  type AuthenticatedUser,
 } from "./lib/auth";
 
 import type {
@@ -14,13 +14,16 @@ import type {
   LoadRevisionPermit,
   Status,
 } from "./types";
+
 import { Shell } from "./components/layout/AppShell";
 import { Info } from "./components/ui";
 import { LoginPage } from "./pages/auth/LoginPage";
+
 import {
   StudentDashboard,
   ApproverDashboard,
 } from "./pages/dashboard/DashboardPages";
+
 import {
   Detail,
   NewRequest,
@@ -28,91 +31,198 @@ import {
   RequestsPage,
   SubmissionSuccess,
 } from "./pages/requests/RequestPages";
+
 import { ReviewPage } from "./pages/review/ReviewPage";
+
 import { NotificationsPage, SignaturePage } from "./pages/account/AccountPages";
+
 import { approvalQueue, defaultPermit, requestsSeed } from "./data/initialData";
 
 export default function App() {
+  const [user, setUser] = useState<AuthenticatedUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [page, setPage] = useState<Page>("login");
-  const [role, setRole] = useState<Role>("student");
   const [selectedType, setSelectedType] = useState("Load Revision Form");
+
   const [selectedRequest, setSelectedRequest] = useState<RequestItem>(
     requestsSeed[0],
   );
+
   const [requests, setRequests] = useState<RequestItem[]>(requestsSeed);
   const [queue, setQueue] = useState<RequestItem[]>(approvalQueue);
   const [submitted, setSubmitted] = useState<RequestItem | null>(null);
-  const login = (r: Role) => {
-    setRole(r);
+
+  // Restore an existing authenticated session when the app starts.
+  useEffect(() => {
+    let active = true;
+
+    async function restoreSession() {
+      try {
+        const currentUser = await getCurrentUser();
+
+        if (!active) return;
+
+        if (currentUser) {
+          setUser(currentUser);
+          setPage("dashboard");
+        }
+      } catch (error) {
+        console.error("Session restoration failed:", error);
+      } finally {
+        if (active) {
+          setAuthLoading(false);
+        }
+      }
+    }
+
+    restoreSession();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // The UI role is only for choosing the appropriate interface.
+  // Backend middleware remains responsible for actual authorization.
+  const role: Role | null = user
+    ? user.roles.includes("STUDENT")
+      ? "student"
+      : "approver"
+    : null;
+
+  async function login(email: string, password: string) {
+    const authenticatedUser = await loginApi(email, password);
+
+    setUser(authenticatedUser);
+    setSubmitted(null);
     setPage("dashboard");
-  };
-  const open = (r: RequestItem) => {
-    setSelectedRequest(r);
-    setPage(role === "approver" ? "detail" : "detail");
-  };
-  const submitRequest = (permit?: LoadRevisionPermit) => {
+  }
+
+  async function logout() {
+    try {
+      await logoutApi();
+
+      setUser(null);
+      setSubmitted(null);
+      setPage("login");
+    } catch (error) {
+      console.error("Logout failed:", error);
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to log out. Please try again.",
+      );
+    }
+  }
+
+  function open(request: RequestItem) {
+    setSelectedRequest(request);
+    setPage("detail");
+  }
+
+  function submitRequest(permit?: LoadRevisionPermit) {
+    if (!user) return;
+
     const nextReference =
       Math.max(
         ...requests.map((request) => Number(request.id.split("-").at(-1)) || 0),
         ...queue.map((request) => Number(request.id.split("-").at(-1)) || 0),
         1061,
       ) + 1;
-    const r = {
+
+    const studentName = [user.givenName, user.middleName, user.familyName]
+      .filter(Boolean)
+      .join(" ");
+
+    const nextRequest: RequestItem = {
       id: `IIT-2025-${nextReference}`,
       type: selectedType,
       student: permit
         ? `${permit.givenName} ${permit.middleName} ${permit.familyName}`
             .replace(/\s+/g, " ")
             .trim()
-        : "Andrea M. Santos",
-      date: "May 26, 2025",
+        : studentName,
+      date: new Date().toLocaleDateString(),
       stage: "Program Adviser",
-      status: "Pending" as Status,
+      status: "Pending",
       permit,
     };
-    setRequests([r, ...requests]);
-    setQueue([r, ...queue]);
-    setSubmitted(r);
-  };
-  const finishReview = (
+
+    setRequests((previous) => [nextRequest, ...previous]);
+    setQueue((previous) => [nextRequest, ...previous]);
+    setSubmitted(nextRequest);
+  }
+
+  function finishReview(
     status: Status,
     reason?: string,
     signatureSlot?: string,
-  ) => {
+  ) {
     const nextStatus: Status = signatureSlot ? "Pending" : status;
+
     const permit = signatureSlot
       ? {
           ...(selectedRequest.permit || defaultPermit),
           signatures: {
             ...(selectedRequest.permit || defaultPermit).signatures,
-            [signatureSlot]: "Dr. Elena Villanueva",
+            [signatureSlot]: user
+              ? `${user.givenName} ${user.familyName}`
+              : "Authorized Approver",
           },
         }
       : selectedRequest.permit;
-    const updated = {
+
+    const updated: RequestItem = {
       ...selectedRequest,
       status: nextStatus,
       reason,
       permit,
       stage: signatureSlot ? `${signatureSlot} signed` : selectedRequest.stage,
     };
+
     setSelectedRequest(updated);
-    setRequests(
-      requests.map((r) => (r.id === selectedRequest.id ? updated : r)),
+
+    setRequests((previous) =>
+      previous.map((request) =>
+        request.id === selectedRequest.id ? updated : request,
+      ),
     );
-    setQueue(queue.map((r) => (r.id === selectedRequest.id ? updated : r)));
+
+    setQueue((previous) =>
+      previous.map((request) =>
+        request.id === selectedRequest.id ? updated : request,
+      ),
+    );
+
     setPage("detail");
-  };
-  if (page === "login") return <LoginPage onLogin={login} />;
-  if (submitted)
+  }
+
+  if (authLoading) {
+    return (
+      <div className="login-page">
+        <div className="login-box">
+          <p>Checking your session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !role) {
+    return <LoginPage onLogin={login} />;
+  }
+
+  if (submitted) {
     return (
       <Shell
+        user={user}
         role={role}
         page="requests"
-        navigate={(p) => {
+        navigate={(nextPage) => {
           setSubmitted(null);
-          setPage(p);
+          setPage(nextPage);
         }}
+        onLogout={logout}
         title="Request submitted"
         subtitle="Your document has entered the approval workflow."
       >
@@ -126,51 +236,70 @@ export default function App() {
         />
       </Shell>
     );
-  let title = "Dashboard",
-    subtitle =
-      role === "student"
-        ? "An overview of your university document requests."
-        : "Review and manage documents assigned to you.";
+  }
+
+  let title = "Dashboard";
+
+  let subtitle =
+    role === "student"
+      ? "An overview of your university document requests."
+      : "Review and manage documents assigned to you.";
+
   if (page === "new") {
     title = "New document request";
     subtitle = "Choose a form to begin your submission.";
   }
+
   if (page === "form") {
     title = "Complete request";
     subtitle = "Provide the required document information.";
   }
+
   if (page === "requests") {
     title = role === "student" ? "My requests" : "Pending approvals";
+
     subtitle =
       role === "student"
         ? "Search, filter, and track all your document requests."
         : "Documents currently awaiting your review.";
   }
+
   if (page === "detail") {
     title = "Request details";
     subtitle = "Review submitted information and approval progress.";
   }
+
   if (page === "review") {
     title = "Document review";
     subtitle = "Verify information and record your decision.";
   }
+
   if (page === "signature") {
     title = "My e-signature";
     subtitle = "Create and manage your signature for document approvals.";
   }
+
   if (page === "notifications") {
     title = "Notifications";
     subtitle = "Stay informed about document activity and updates.";
   }
+
   if (page === "settings") {
     title = "Profile & settings";
     subtitle = "Manage your account preferences.";
   }
+
+  const displayName = [user.givenName, user.middleName, user.familyName]
+    .filter(Boolean)
+    .join(" ");
+
   return (
     <Shell
+      user={user}
       role={role}
       page={page}
       navigate={setPage}
+      onLogout={logout}
       title={title}
       subtitle={subtitle}
     >
@@ -180,6 +309,7 @@ export default function App() {
         ) : (
           <ApproverDashboard navigate={setPage} open={open} queue={queue} />
         ))}
+
       {page === "new" && (
         <NewRequest
           select={(type) => {
@@ -188,6 +318,7 @@ export default function App() {
           }}
         />
       )}
+
       {page === "form" && (
         <RequestForm
           type={selectedType}
@@ -195,6 +326,7 @@ export default function App() {
           submit={submitRequest}
         />
       )}
+
       {page === "requests" && (
         <RequestsPage
           data={role === "student" ? requests : queue}
@@ -202,6 +334,7 @@ export default function App() {
           open={open}
         />
       )}
+
       {page === "detail" && (
         <Detail
           request={selectedRequest}
@@ -210,6 +343,7 @@ export default function App() {
           review={() => setPage("review")}
         />
       )}
+
       {page === "review" && (
         <ReviewPage
           request={selectedRequest}
@@ -217,26 +351,31 @@ export default function App() {
           back={() => setPage("detail")}
         />
       )}
+
       {page === "signature" && <SignaturePage />}
+
       {page === "notifications" && <NotificationsPage role={role} />}
+
       {page === "settings" && (
         <section className="card settings-placeholder">
-          <div className="avatar large">{role === "student" ? "AS" : "EV"}</div>
-          <h2>
-            {role === "student" ? "Andrea M. Santos" : "Dr. Elena Villanueva"}
-          </h2>
-          <p>
-            {role === "student"
-              ? "andrea.santos@g.msuiit.edu.ph"
-              : "elena.villanueva@msuiit.edu.ph"}
-          </p>
+          <div className="avatar large">
+            {user.givenName.charAt(0)}
+            {user.familyName.charAt(0)}
+          </div>
+
+          <h2>{displayName}</h2>
+          <p>{user.email}</p>
+
           <div className="info-grid">
             <Info label="University affiliation" value="MSU–IIT" />
+
             <Info
               label="Account role"
-              value={role === "student" ? "Student" : "Authorized Approver"}
+              value={user.roles.join(", ") || "No assigned role"}
             />
+
             <Info label="Notification preference" value="Email and in-app" />
+
             <Info label="Account status" value="Active" />
           </div>
         </section>
