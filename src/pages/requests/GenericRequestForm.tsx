@@ -1,5 +1,15 @@
 import { useState, type FormEvent } from "react";
+
+import type {
+  ShifterApplicationSubmission,
+  LeaveOfAbsenceSubmission,
+} from "../../lib/auth";
+
 import { Button, Field, Icon, Modal } from "../../components/ui";
+
+type GenericRequestSubmission =
+  | ShifterApplicationSubmission
+  | LeaveOfAbsenceSubmission;
 
 export function GenericRequestForm({
   type,
@@ -8,92 +18,135 @@ export function GenericRequestForm({
 }: {
   type: string;
   cancel: () => void;
-  submit: () => void;
+  submit: (data?: GenericRequestSubmission) => void;
 }) {
   const [reason, setReason] = useState("");
+  const [intendedProgram, setIntendedProgram] = useState("");
+  const [currentAcademicYear, setCurrentAcademicYear] = useState("");
+  const [semester, setSemester] = useState("1st Semester");
+
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState(false);
+
+  const isShifter = type === "Shifter's Application Form";
+  const isLeave = type === "Leave of Absence Form";
+
   function validate(e: FormEvent) {
     e.preventDefault();
-    if (!reason.trim()) setError(true);
-    else setConfirm(true);
+
+    if (
+      !reason.trim() ||
+      (isShifter && !intendedProgram.trim()) ||
+      (isLeave && !currentAcademicYear.trim())
+    ) {
+      setError(true);
+      return;
+    }
+
+    setError(false);
+    setConfirm(true);
   }
+
+  function confirmSubmission() {
+    if (isShifter) {
+      submit({
+        intendedProgram: intendedProgram.trim(),
+        reason: reason.trim(),
+      });
+      return;
+    }
+
+    if (isLeave) {
+      submit({
+        currentAcademicYear: currentAcademicYear.trim(),
+        semester,
+        reason: reason.trim(),
+      });
+    }
+  }
+
   return (
     <>
       <div className="form-page-head">
         <button className="back-link" onClick={cancel}>
           ← Back to forms
         </button>
+
         <span>New request</span>
         <h2>{type}</h2>
+
         <p>
           Complete the required information below. Fields marked with * are
           required.
         </p>
       </div>
+
       <form className="request-form" onSubmit={validate}>
         <section className="form-section">
           <div className="section-number">1</div>
+
           <div className="section-body">
             <div className="section-title">
               <h3>Student information</h3>
-              <p>Confirm your university and academic details.</p>
-            </div>
-            <div className="form-grid">
-              <Field label="Student ID" required>
-                <input defaultValue="2021-1234" />
-              </Field>
-              <Field label="Full name" required>
-                <input defaultValue="Andrea M. Santos" />
-              </Field>
-              <Field label="Program / Course" required>
-                <select defaultValue="BSIT">
-                  <option value="BSIT">BS Information Technology</option>
-                  <option>BS Computer Science</option>
-                </select>
-              </Field>
-              <Field label="Year level" required>
-                <select defaultValue="4">
-                  <option value="4">4th Year</option>
-                  <option>3rd Year</option>
-                </select>
-              </Field>
+              <p>
+                Your identity and academic profile will be retrieved from your
+                authenticated university account.
+              </p>
             </div>
           </div>
         </section>
+
         <section className="form-section">
           <div className="section-number">2</div>
+
           <div className="section-body">
             <div className="section-title">
               <h3>
-                {type === "Load Revision Form"
-                  ? "Academic and subject details"
-                  : type === "Shifter's Application Form"
-                    ? "Program information"
-                    : "Academic information"}
+                {isShifter ? "Program information" : "Academic information"}
               </h3>
+
               <p>Provide the details relevant to this request.</p>
             </div>
+
             <div className="form-grid">
-              {type === "Shifter's Application Form" && (
-                <>
-                  <Field label="Current program" required>
-                    <input defaultValue="BS Information Technology" />
-                  </Field>
-                  <Field label="Intended program" required>
-                    <input placeholder="Select intended program" />
-                  </Field>
-                </>
+              {isShifter && (
+                <Field label="Intended program" required>
+                  <input
+                    type="text"
+                    value={intendedProgram}
+                    onChange={(e) => {
+                      setIntendedProgram(e.target.value);
+                      setError(false);
+                    }}
+                    placeholder="Enter your intended program"
+                    maxLength={120}
+                  />
+                </Field>
               )}
-              {type === "Leave of Absence Form" && (
+
+              {isLeave && (
                 <>
                   <Field label="Current academic year" required>
-                    <input defaultValue="2024–2025" />
+                    <input
+                      type="text"
+                      value={currentAcademicYear}
+                      onChange={(e) => {
+                        setCurrentAcademicYear(e.target.value);
+                        setError(false);
+                      }}
+                      placeholder="Example: 2026-2027"
+                      maxLength={60}
+                    />
                   </Field>
+
                   <Field label="Semester" required>
-                    <select>
-                      <option>Second semester</option>
-                      <option>First semester</option>
+                    <select
+                      value={semester}
+                      onChange={(e) => setSemester(e.target.value)}
+                    >
+                      <option value="1st Semester">First Semester</option>
+                      <option value="2nd Semester">Second Semester</option>
+                      <option value="Summer Term">Summer Term</option>
                     </select>
                   </Field>
                 </>
@@ -101,24 +154,26 @@ export function GenericRequestForm({
             </div>
           </div>
         </section>
+
         <section className="form-section">
           <div className="section-number">3</div>
+
           <div className="section-body">
             <div className="section-title">
               <h3>Reason for request</h3>
+
               <p>
-                {type === "Shifter's Application Form"
-                  ? "Explain your reason for enrolling in the present course and for shifting."
-                  : "Briefly explain the circumstances for this request."}
+                {isShifter
+                  ? "Explain your reason for enrolling in your present program and for shifting."
+                  : "Briefly explain the circumstances for your leave of absence."}
               </p>
             </div>
+
             <Field
               label={
-                type === "Leave of Absence Form"
+                isLeave
                   ? "Reason for leave of absence"
-                  : type === "Shifter's Application Form"
-                    ? "Reason for shifting or transferring"
-                    : "Reason for adding or withdrawing"
+                  : "Reason for shifting or transferring"
               }
               required
             >
@@ -130,44 +185,71 @@ export function GenericRequestForm({
                 }}
                 placeholder="Provide a clear explanation to help approvers review your request…"
                 rows={5}
+                maxLength={5000}
               />
+
               {error && (
                 <span className="error-text">
-                  Please provide a reason before continuing.
+                  Please complete all required fields before continuing.
                 </span>
               )}
             </Field>
           </div>
         </section>
+
         <div className="form-actions">
           <Button variant="secondary" onClick={cancel}>
             Cancel
           </Button>
+
           <Button type="submit">
             Review and submit <Icon name="arrow" size={16} />
           </Button>
         </div>
       </form>
+
       {confirm && (
         <Modal title="Submit this request?" close={() => setConfirm(false)}>
           <div className="confirm-icon">
             <Icon name="file" />
           </div>
+
           <p>
             You're about to submit your <strong>{type}</strong>. The request
             will be routed to the first designated approver.
           </p>
+
           <div className="modal-summary">
             <span>Student</span>
-            <strong>Andrea M. Santos</strong>
+            <strong>Authenticated student account</strong>
+
+            {isShifter && (
+              <>
+                <span>Intended program</span>
+                <strong>{intendedProgram}</strong>
+              </>
+            )}
+
+            {isLeave && (
+              <>
+                <span>Academic year</span>
+                <strong>{currentAcademicYear}</strong>
+
+                <span>Semester</span>
+                <strong>{semester}</strong>
+              </>
+            )}
+
             <span>Document</span>
             <strong>{type}</strong>
           </div>
+
           <div className="modal-actions">
             <Button variant="secondary" onClick={() => setConfirm(false)}>
               Go back
             </Button>
-            <Button onClick={submit}>Confirm submission</Button>
+
+            <Button onClick={confirmSubmission}>Confirm submission</Button>
           </div>
         </Modal>
       )}

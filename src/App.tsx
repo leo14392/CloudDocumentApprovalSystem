@@ -4,16 +4,14 @@ import {
   getCurrentUser,
   loginApi,
   logoutApi,
+  submitLoadRevisionApi,
+  submitShifterApplicationApi,
+  submitLeaveOfAbsenceApi,
   type AuthenticatedUser,
 } from "./lib/auth";
 
-import type {
-  Page,
-  Role,
-  RequestItem,
-  LoadRevisionPermit,
-  Status,
-} from "./types";
+import type { Page, Role, RequestItem, Status } from "./types";
+import type { RequestSubmission } from "./pages/requests/RequestForm";
 
 import { Shell } from "./components/layout/AppShell";
 import { Info } from "./components/ui";
@@ -121,37 +119,63 @@ export default function App() {
     setPage("detail");
   }
 
-  function submitRequest(permit?: LoadRevisionPermit) {
+  async function submitRequest(submission: RequestSubmission) {
     if (!user) return;
 
-    const nextReference =
-      Math.max(
-        ...requests.map((request) => Number(request.id.split("-").at(-1)) || 0),
-        ...queue.map((request) => Number(request.id.split("-").at(-1)) || 0),
-        1061,
-      ) + 1;
+    try {
+      let nextRequest: RequestItem;
 
-    const studentName = [user.givenName, user.middleName, user.familyName]
-      .filter(Boolean)
-      .join(" ");
+      if (submission.kind === "loadRevision") {
+        const permit = submission.permit;
+        const result = await submitLoadRevisionApi(permit);
 
-    const nextRequest: RequestItem = {
-      id: `IIT-2025-${nextReference}`,
-      type: selectedType,
-      student: permit
-        ? `${permit.givenName} ${permit.middleName} ${permit.familyName}`
-            .replace(/\s+/g, " ")
-            .trim()
-        : studentName,
-      date: new Date().toLocaleDateString(),
-      stage: "Program Adviser",
-      status: "Pending",
-      permit,
-    };
+        nextRequest = {
+          id: result.referenceNumber,
+          type: "Academic Load Revision Permit",
+          student: result.student,
+          date: new Date(result.submittedAt).toLocaleDateString(),
+          stage: "Program Adviser",
+          status: "Pending",
+          permit,
+        };
+      } else if (submission.kind === "shifter") {
+        const result = await submitShifterApplicationApi(submission.data);
 
-    setRequests((previous) => [nextRequest, ...previous]);
-    setQueue((previous) => [nextRequest, ...previous]);
-    setSubmitted(nextRequest);
+        nextRequest = {
+          id: result.referenceNumber,
+          type: "Shifter's Application Form",
+          student: result.student,
+          date: new Date(result.submittedAt).toLocaleDateString(),
+          stage: "Program Adviser",
+          status: "Pending",
+          reason: submission.data.reason,
+        };
+      } else {
+        const result = await submitLeaveOfAbsenceApi(submission.data);
+
+        nextRequest = {
+          id: result.referenceNumber,
+          type: "Leave of Absence Form",
+          student: result.student,
+          date: new Date(result.submittedAt).toLocaleDateString(),
+          stage: "Program Adviser",
+          status: "Pending",
+          reason: submission.data.reason,
+        };
+      }
+
+      setRequests((previous) => [nextRequest, ...previous]);
+      setQueue((previous) => [nextRequest, ...previous]);
+      setSubmitted(nextRequest);
+    } catch (error) {
+      console.error("Request submission failed:", error);
+
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to submit your request. Please try again.",
+      );
+    }
   }
 
   function finishReview(
