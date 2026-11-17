@@ -55,6 +55,19 @@ export type LoadRevisionPermit = {
   signatures: Record<string, string>;
 };
 
+export interface StudentDashboardData {
+  stats: {
+    total: number;
+    pending: number;
+    approved: number;
+    returned: number;
+    rejected: number;
+    completed: number;
+  };
+  recentRequests: RequestItem[];
+  activeRequest: RequestItem | null;
+}
+
 export type RequestItem = {
   id: string;
   type: string;

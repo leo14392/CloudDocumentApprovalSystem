@@ -329,7 +329,11 @@ export default function App() {
     >
       {page === "dashboard" &&
         (role === "student" ? (
-          <StudentDashboard navigate={setPage} open={open} />
+          <StudentDashboard
+            navigate={setPage}
+            open={open}
+            studentName={displayName}
+          />
         ) : (
           <ApproverDashboard navigate={setPage} open={open} queue={queue} />
         ))}

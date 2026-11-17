@@ -9,6 +9,7 @@ import connectPgSimple from "connect-pg-simple";
 import { pool } from "./config/database.js";
 import authRoutes from "./routes/auth.routes.js";
 import requestRoutes from "./routes/request.routes.js";
+import dashboardRoutes from "./routes/dashboard.routes.js";
 
 const app = express();
 
@@ -82,6 +83,8 @@ app.get("/api/health", async (_req, res) => {
 app.use("/api/auth", authRoutes);
 
 app.use("/api/requests", requestRoutes);
+
+app.use("/api/dashboard", dashboardRoutes);
 
 app.listen(port, () => {
   console.log(`Backend running at http://localhost:${port}`);

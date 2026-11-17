@@ -1,4 +1,4 @@
-Recommended implementation roadmap
+Recommended implementation roadmap PHASE 2
 
 1. Phase 1 — Document request management Next
 
@@ -38,3 +38,39 @@ Recommended implementation roadmap
    - Test unauthorized access.
    - Test session expiration and logout.
    - Verify database constraints and transaction rollback.
+
+# =
+
+# =
+
+=
+Recommended development roadmap PHASE 3
+
+1. 1. Define the approval hierarchy
+
+   Establish who reviews, approves, returns, or rejects each document type.
+   - Academic Load Revision Permit
+   - Shifter's Application Form
+   - Leave of Absence Form
+
+2. 2. Design the approval database
+
+   Add the necessary tables for:
+   - Approval stages and routing
+   - Assigned approvers
+   - Approval decisions and remarks
+   - Approval history and audit trail
+
+3. 3. Implement backend approval APIs
+   - Retrieve assigned pending requests.
+   - Approve or reject requests.
+   - Return requests for revision.
+   - Validate approver permissions.
+   - Record every decision.
+4. 4. Connect the frontend
+
+   Make the existing Review Page functional, including request details, approval actions, and decision history.
+
+5. 5. Test the complete workflow
+
+   Test every document type using the demo student, adviser, chairperson, dean, and registrar accounts.
