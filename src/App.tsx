@@ -9,6 +9,8 @@ import {
   submitLeaveOfAbsenceApi,
   type AuthenticatedUser,
 } from "./lib/auth";
+import { getApproverDashboardApi } from "./lib/dashboard";
+import { getRequestsApi } from "./lib/requests";
 
 import type { Page, Role, RequestItem, Status } from "./types";
 import type { RequestSubmission } from "./pages/requests/RequestForm";
@@ -34,7 +36,7 @@ import { ReviewPage } from "./pages/review/ReviewPage";
 
 import { NotificationsPage, SignaturePage } from "./pages/account/AccountPages";
 
-import { approvalQueue, defaultPermit, requestsSeed } from "./data/initialData";
+import { defaultPermit } from "./data/initialData";
 
 export default function App() {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
@@ -43,12 +45,12 @@ export default function App() {
   const [page, setPage] = useState<Page>("login");
   const [selectedType, setSelectedType] = useState("Load Revision Form");
 
-  const [selectedRequest, setSelectedRequest] = useState<RequestItem>(
-    requestsSeed[0],
+  const [selectedRequest, setSelectedRequest] = useState<RequestItem | null>(
+    null,
   );
 
-  const [requests, setRequests] = useState<RequestItem[]>(requestsSeed);
-  const [queue, setQueue] = useState<RequestItem[]>(approvalQueue);
+  const [requests, setRequests] = useState<RequestItem[]>([]);
+  const [queue, setQueue] = useState<RequestItem[]>([]);
   const [submitted, setSubmitted] = useState<RequestItem | null>(null);
 
   // Restore an existing authenticated session when the app starts.
@@ -81,6 +83,92 @@ export default function App() {
     };
   }, []);
 
+  // Load the authenticated user's live request list.
+  useEffect(() => {
+    if (!user) {
+      setRequests([]);
+      return;
+    }
+
+    let active = true;
+
+    async function refreshRequests() {
+      try {
+        const result = await getRequestsApi();
+
+        if (!active) return;
+
+        const liveRequests: RequestItem[] = result.map((request) => ({
+          id: request.id,
+          type: request.type,
+          student: request.student,
+          date: request.date,
+          stage: request.stage,
+          status: request.status as Status,
+        }));
+
+        setRequests(liveRequests);
+      } catch (error) {
+        console.error("Request list loading failed:", error);
+      }
+    }
+
+    refreshRequests();
+
+    const interval = window.setInterval(refreshRequests, 10000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [user]);
+
+  // Load live pending approvals for approvers.
+  useEffect(() => {
+    if (!user || user.roles.includes("STUDENT")) {
+      setQueue([]);
+      return;
+    }
+
+    let active = true;
+
+    async function refreshQueue() {
+      try {
+        const result = await getApproverDashboardApi();
+
+        if (!active) return;
+
+        const liveQueue: RequestItem[] = result.pendingRequests.map(
+          (request) => ({
+            id: request.referenceNumber,
+            type: request.type,
+            student: request.studentName,
+            date: new Date(request.submittedAt).toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            }),
+            stage: request.status,
+            status: request.status as Status,
+          }),
+        );
+
+        setQueue(liveQueue);
+      } catch (error) {
+        console.error("Pending approvals loading failed:", error);
+      }
+    }
+
+    refreshQueue();
+
+    const interval = window.setInterval(refreshQueue, 10000);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [user]);
+
   // The UI role is only for choosing the appropriate interface.
   // Backend middleware remains responsible for actual authorization.
   const role: Role | null = user
@@ -94,6 +182,7 @@ export default function App() {
 
     setUser(authenticatedUser);
     setSubmitted(null);
+    setSelectedRequest(null);
     setPage("dashboard");
   }
 
@@ -103,6 +192,9 @@ export default function App() {
 
       setUser(null);
       setSubmitted(null);
+      setSelectedRequest(null);
+      setRequests([]);
+      setQueue([]);
       setPage("login");
     } catch (error) {
       console.error("Logout failed:", error);
@@ -134,7 +226,7 @@ export default function App() {
           type: "Academic Load Revision Permit",
           student: result.student,
           date: new Date(result.submittedAt).toLocaleDateString(),
-          stage: "Program Adviser",
+          stage: "Awaiting review",
           status: "Pending",
           permit,
         };
@@ -146,7 +238,7 @@ export default function App() {
           type: "Shifter's Application Form",
           student: result.student,
           date: new Date(result.submittedAt).toLocaleDateString(),
-          stage: "Program Adviser",
+          stage: "Awaiting review",
           status: "Pending",
           reason: submission.data.reason,
         };
@@ -158,14 +250,39 @@ export default function App() {
           type: "Leave of Absence Form",
           student: result.student,
           date: new Date(result.submittedAt).toLocaleDateString(),
-          stage: "Program Adviser",
+          stage: "Awaiting review",
           status: "Pending",
           reason: submission.data.reason,
         };
       }
 
-      setRequests((previous) => [nextRequest, ...previous]);
-      setQueue((previous) => [nextRequest, ...previous]);
+      // Refresh the authoritative request list from PostgreSQL.
+      try {
+        const result = await getRequestsApi();
+
+        setRequests(
+          result.map((request) => ({
+            id: request.id,
+            type: request.type,
+            student: request.student,
+            date: request.date,
+            stage: request.stage,
+            status: request.status as Status,
+          })),
+        );
+      } catch (refreshError) {
+        console.error(
+          "Request was submitted, but the list refresh failed:",
+          refreshError,
+        );
+
+        // Keep the successful submission visible until the next refresh.
+        setRequests((previous) => [
+          nextRequest,
+          ...previous.filter((request) => request.id !== nextRequest.id),
+        ]);
+      }
+
       setSubmitted(nextRequest);
     } catch (error) {
       console.error("Request submission failed:", error);
@@ -178,11 +295,15 @@ export default function App() {
     }
   }
 
+  // Prototype-only review behavior.
+  // This does not persist approval decisions to PostgreSQL.
   function finishReview(
     status: Status,
     reason?: string,
     signatureSlot?: string,
   ) {
+    if (!selectedRequest) return;
+
     const nextStatus: Status = signatureSlot ? "Pending" : status;
 
     const permit = signatureSlot
@@ -363,22 +484,34 @@ export default function App() {
         />
       )}
 
-      {page === "detail" && (
-        <Detail
-          request={selectedRequest}
-          role={role}
-          back={() => setPage("requests")}
-          review={() => setPage("review")}
-        />
-      )}
+      {page === "detail" &&
+        (selectedRequest ? (
+          <Detail
+            request={selectedRequest}
+            role={role}
+            back={() => setPage("requests")}
+            review={() => setPage("review")}
+          />
+        ) : (
+          <Info
+            label="Request unavailable"
+            value="Select a request from the request list to view its details."
+          />
+        ))}
 
-      {page === "review" && (
-        <ReviewPage
-          request={selectedRequest}
-          finish={finishReview}
-          back={() => setPage("detail")}
-        />
-      )}
+      {page === "review" &&
+        (selectedRequest ? (
+          <ReviewPage
+            request={selectedRequest}
+            finish={finishReview}
+            back={() => setPage("detail")}
+          />
+        ) : (
+          <Info
+            label="Request unavailable"
+            value="Select a request before opening the review page."
+          />
+        ))}
 
       {page === "signature" && <SignaturePage />}
 

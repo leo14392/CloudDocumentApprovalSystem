@@ -1,3 +1,4 @@
+
 import { Router } from "express";
 
 import {
@@ -8,7 +9,9 @@ import {
 import {
   createLoadRevision,
   createShifterApplication,
-  createLeaveOfAbsence
+  createLeaveOfAbsence,
+  getRequestsController,
+  getRequestDetailsController
 } from "../controllers/request.controller.js";
 
 const router = Router();
@@ -35,6 +38,20 @@ router.post(
   requireAuth,
   requireRole("STUDENT"),
   createLeaveOfAbsence
+);
+
+// Retrieve all accessible requests
+router.get(
+  "/",
+  requireAuth,
+  getRequestsController
+);
+
+// Retrieve one request using its reference number
+router.get(
+  "/:referenceNumber",
+  requireAuth,
+  getRequestDetailsController
 );
 
 export default router;

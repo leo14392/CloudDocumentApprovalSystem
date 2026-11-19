@@ -5,7 +5,9 @@ import { z } from "zod";
 import {
   createLoadRevisionRequest,
   createShifterApplicationRequest,
-  createLeaveOfAbsenceRequest
+  createLeaveOfAbsenceRequest,
+  getRequests,
+  getRequestDetails
 } from "../services/request.service.js";
 
 const subjectSchema = z.object({
@@ -330,6 +332,97 @@ export async function createLeaveOfAbsence(
     return res.status(500).json({
       success: false,
       message: "Unable to submit the Leave of Absence Form. Please try again."
+    });
+  }
+}
+
+export async function getRequestsController(
+  req: Request,
+  res: Response
+) {
+  const authenticatedUser = req.session.user;
+
+  if (!authenticatedUser) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required."
+    });
+  }
+
+  try {
+    const isStudent = authenticatedUser.roles.includes("STUDENT");
+
+    const requests = await getRequests(
+      authenticatedUser.id,
+      isStudent
+    );
+
+    return res.status(200).json({
+      success: true,
+      requests
+    });
+  } catch (error) {
+    console.error("Request retrieval failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve requests."
+    });
+  }
+}
+
+export async function getRequestDetailsController(
+  req: Request,
+  res: Response
+) {
+  const authenticatedUser = req.session.user;
+
+  if (!authenticatedUser) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required."
+    });
+  }
+
+  const referenceNumber = z.string()
+    .trim()
+    .min(1)
+    .max(50)
+    .safeParse(req.params.referenceNumber);
+
+  if (!referenceNumber.success) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid request reference number is required."
+    });
+  }
+
+  try {
+    const isStudent = authenticatedUser.roles.includes("STUDENT");
+
+    const request = await getRequestDetails(
+      referenceNumber.data,
+      authenticatedUser.id,
+      isStudent
+    );
+
+    if (!request) {
+      return res.status(404).json({
+        success: false,
+        message: "Request not found."
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      request
+    });
+  } catch (error) {
+    console.error("Request detail retrieval failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to retrieve request details."
     });
   }
 }
