@@ -1,6 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Role } from "../../types";
 import { Button, Icon, Modal } from "../../components/ui";
+import {
+  getNotificationsApi,
+  markNotificationAsReadApi,
+  markAllNotificationsAsReadApi,
+  type NotificationItem,
+} from "../../lib/notifications";
 
 export function SignaturePage() {
   const [saved, setSaved] = useState(true);
@@ -116,95 +122,286 @@ export function SignaturePage() {
   );
 }
 
-export function NotificationsPage({ role }: { role: Role }) {
-  const items =
-    role === "student"
-      ? [
-          [
-            "check",
-            "Your document was approved",
-            "Your Leave of Absence Form has received final approval.",
-            "12 minutes ago",
-            true,
-          ],
-          [
-            "rotate",
-            "Revision requested",
-            "Your Shifter's Application Form was returned with a comment.",
-            "Yesterday",
-            true,
-          ],
-          [
-            "file",
-            "Document submitted successfully",
-            "IIT-2025-1048 is now with the College Dean.",
-            "May 22",
-            false,
-          ],
-          [
-            "download",
-            "Your approved PDF is ready",
-            "Load Revision Form IIT-2025-0912 is available to download.",
-            "Apr 29",
-            false,
-          ],
-        ]
-      : [
-          [
-            "file",
-            "New document awaiting review",
-            "Miguel Ramos submitted a Leave of Absence Form.",
-            "8 minutes ago",
-            true,
-          ],
-          [
-            "clock",
-            "Pending approval reminder",
-            "IIT-2025-1048 has been waiting for review for two days.",
-            "2 hours ago",
-            true,
-          ],
-          [
-            "rotate",
-            "Request updated",
-            "Patricia Cruz revised and resubmitted her document.",
-            "Yesterday",
-            false,
-          ],
-        ];
+export function NotificationsPage({
+  role,
+  onOpenRequest,
+}: {
+  role: Role;
+  onOpenRequest: (referenceNumber: string) => Promise<void>;
+}) {
+  const [items, setItems] = useState<NotificationItem[]>([]);
+  const [filter, setFilter] = useState<"all" | "unread">("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
+
+  async function loadNotifications() {
+    try {
+      const notifications = await getNotificationsApi();
+      setItems(notifications);
+      setError("");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to load notifications.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadNotifications();
+
+    const interval = window.setInterval(() => {
+      void loadNotifications();
+    }, 10000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const unreadCount = items.filter((item) => !item.isRead).length;
+
+  const filteredItems =
+    filter === "unread" ? items.filter((item) => !item.isRead) : items;
+
+  function getNotificationIcon(type: string) {
+    switch (type) {
+      case "submission_confirmation":
+        return "check";
+      case "new_request":
+        return "file";
+      case "approved":
+        return "check";
+      case "revision_requested":
+        return "rotate";
+      case "reminder":
+        return "clock";
+      default:
+        return "file";
+    }
+  }
+
+  function getNotificationTone(type: string) {
+    switch (type) {
+      case "submission_confirmation":
+      case "approved":
+        return "green";
+      case "revision_requested":
+        return "amber";
+      default:
+        return "maroon";
+    }
+  }
+
+  function formatNotificationDate(date: string) {
+    const parsedDate = new Date(date);
+
+    if (Number.isNaN(parsedDate.getTime())) {
+      return "Date unavailable";
+    }
+
+    return parsedDate.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  }
+
+  async function handleMarkAsRead(notificationId: string) {
+    try {
+      await markNotificationAsReadApi(notificationId);
+
+      setItems((currentItems) =>
+        currentItems.map((item) =>
+          item.id === notificationId ? { ...item, isRead: true } : item,
+        ),
+      );
+
+      window.dispatchEvent(new Event("notifications-updated"));
+
+      setError("");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to mark notification as read.",
+      );
+    }
+  }
+
+  async function handleNotificationClick(item: NotificationItem) {
+    try {
+      if (!item.isRead) {
+        await markNotificationAsReadApi(item.id);
+
+        setItems((currentItems) =>
+          currentItems.map((notification) =>
+            notification.id === item.id
+              ? { ...notification, isRead: true }
+              : notification,
+          ),
+        );
+
+        window.dispatchEvent(new Event("notifications-updated"));
+      }
+
+      setError("");
+
+      if (item.referenceNumber) {
+        await onOpenRequest(item.referenceNumber);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to open this notification.",
+      );
+    }
+  }
+
+  async function handleMarkAllAsRead() {
+    if (unreadCount === 0 || actionLoading) {
+      return;
+    }
+
+    setActionLoading(true);
+
+    try {
+      await markAllNotificationsAsReadApi();
+
+      setItems((currentItems) =>
+        currentItems.map((item) => ({
+          ...item,
+          isRead: true,
+        })),
+      );
+
+      window.dispatchEvent(new Event("notifications-updated"));
+
+      setError("");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to mark all notifications as read.",
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  }
+
   return (
     <section className="card notification-card">
       <div className="card-head">
         <div>
           <h3>All notifications</h3>
-          <p>Updates about documents and approval activity.</p>
+          <p>
+            {role === "student"
+              ? "Updates about your documents and submissions."
+              : "Updates about documents and approval activity."}
+          </p>
         </div>
-        <Button variant="ghost">Mark all as read</Button>
+
+        <Button
+          variant="ghost"
+          onClick={handleMarkAllAsRead}
+          disabled={unreadCount === 0 || actionLoading}
+        >
+          {actionLoading ? "Updating..." : "Mark all as read"}
+        </Button>
       </div>
+
       <div className="notification-filter">
-        <button className="active">All</button>
-        <button>
-          Unread <span>{items.filter((x) => x[4]).length}</span>
+        <button
+          className={filter === "all" ? "active" : ""}
+          onClick={() => setFilter("all")}
+        >
+          All
+        </button>
+
+        <button
+          className={filter === "unread" ? "active" : ""}
+          onClick={() => setFilter("unread")}
+        >
+          Unread <span>{unreadCount}</span>
         </button>
       </div>
-      {items.map((x, i) => (
-        <div className={`notification-item ${x[4] ? "unread" : ""}`} key={i}>
-          <div
-            className={`notification-icon tone-${x[0] === "check" || x[0] === "download" ? "green" : x[0] === "rotate" ? "amber" : "maroon"}`}
-          >
-            <Icon name={x[0] as string} />
-          </div>
-          <div>
-            <strong>{x[1]}</strong>
-            <p>{x[2]}</p>
-            <small>{x[3]}</small>
-          </div>
-          {x[4] && <i />}
-          <button>
-            <Icon name="chevron" size={16} />
-          </button>
+
+      {error && (
+        <div className="notification-error" role="alert">
+          {error}
+          <button onClick={() => void loadNotifications()}>Retry</button>
         </div>
-      ))}
+      )}
+
+      {loading ? (
+        <div className="notification-empty">
+          <p>Loading notifications...</p>
+        </div>
+      ) : filteredItems.length === 0 ? (
+        <div className="notification-empty">
+          <Icon name="check" size={24} />
+          <p>
+            {filter === "unread"
+              ? "You're all caught up. No unread notifications."
+              : "You don't have any notifications yet."}
+          </p>
+        </div>
+      ) : (
+        filteredItems.map((item) => {
+          const icon = getNotificationIcon(item.type);
+          const tone = getNotificationTone(item.type);
+
+          return (
+            <div
+              className={`notification-item ${!item.isRead ? "unread" : ""}`}
+              key={item.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => void handleNotificationClick(item)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  void handleNotificationClick(item);
+                }
+              }}
+              title={
+                item.referenceNumber
+                  ? "Open request details"
+                  : "Mark notification as read"
+              }
+            >
+              <div className={`notification-icon tone-${tone}`}>
+                <Icon name={icon} />
+              </div>
+
+              <div>
+                <strong>{item.title}</strong>
+                <p>{item.message}</p>
+                <small>{formatNotificationDate(item.createdAt)}</small>
+              </div>
+
+              {!item.isRead && <i />}
+
+              <button
+                type="button"
+                aria-label={
+                  item.isRead
+                    ? "Notification already read"
+                    : "Mark notification as read"
+                }
+                title={item.isRead ? "Already read" : "Mark as read"}
+                disabled={item.isRead}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void handleMarkAsRead(item.id);
+                }}
+              >
+                <Icon name="chevron" size={16} />
+              </button>
+            </div>
+          );
+        })
+      )}
     </section>
   );
 }

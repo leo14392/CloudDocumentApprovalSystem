@@ -10,7 +10,7 @@ import {
   type AuthenticatedUser,
 } from "./lib/auth";
 import { getApproverDashboardApi } from "./lib/dashboard";
-import { getRequestsApi } from "./lib/requests";
+import { getRequestsApi, getRequestDetailsApi } from "./lib/requests";
 
 import type { Page, Role, RequestItem, Status } from "./types";
 import type { RequestSubmission } from "./pages/requests/RequestForm";
@@ -209,6 +209,34 @@ export default function App() {
   function open(request: RequestItem) {
     setSelectedRequest(request);
     setPage("detail");
+  }
+
+  async function openNotificationRequest(referenceNumber: string) {
+    try {
+      const details = await getRequestDetailsApi(referenceNumber);
+
+      const request: RequestItem = {
+        id: details.referenceNumber,
+        type: details.documentName,
+        student: details.student.fullName,
+        date: details.submittedAt
+          ? new Date(details.submittedAt).toLocaleDateString()
+          : "Not available",
+        stage: details.status,
+        status: details.status as Status,
+      };
+
+      setSelectedRequest(request);
+      setPage("detail");
+    } catch (error) {
+      console.error("Unable to open notification request:", error);
+
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to open the requested document.",
+      );
+    }
   }
 
   async function submitRequest(submission: RequestSubmission) {
@@ -515,7 +543,12 @@ export default function App() {
 
       {page === "signature" && <SignaturePage />}
 
-      {page === "notifications" && <NotificationsPage role={role} />}
+      {page === "notifications" && (
+        <NotificationsPage
+          role={role}
+          onOpenRequest={openNotificationRequest}
+        />
+      )}
 
       {page === "settings" && (
         <section className="card settings-placeholder">

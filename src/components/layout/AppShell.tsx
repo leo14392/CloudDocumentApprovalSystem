@@ -1,6 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Page, Role } from "../../types";
 import type { AuthenticatedUser } from "../../lib/auth";
+import { getUnreadNotificationCountApi } from "../../lib/notifications";
 import { Icon, Logo } from "../ui";
 
 interface SidebarProps {
@@ -10,6 +11,7 @@ interface SidebarProps {
   open: boolean;
   close: () => void;
   onLogout: () => void;
+  unreadCount: number;
 }
 
 const studentNav = [
@@ -49,6 +51,7 @@ export function Sidebar({
   open,
   close,
   onLogout,
+  unreadCount,
 }: SidebarProps) {
   const nav = role === "student" ? studentNav : approverNav;
 
@@ -85,7 +88,10 @@ export function Sidebar({
           >
             <Icon name={icon} />
             <span>{label}</span>
-            {label === "Notifications" && <em>3</em>}
+
+            {label === "Notifications" && unreadCount > 0 && (
+              <em>{unreadCount > 99 ? "99+" : unreadCount}</em>
+            )}
           </button>
         ))}
       </nav>
@@ -129,6 +135,45 @@ export function Shell({
   subtitle,
 }: ShellProps) {
   const [menu, setMenu] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadUnreadCount = async () => {
+      try {
+        const count = await getUnreadNotificationCountApi();
+
+        if (active) {
+          setUnreadCount(count);
+        }
+      } catch (error) {
+        console.error("Unable to load unread notification count:", error);
+      }
+    };
+
+    loadUnreadCount();
+
+    const interval = window.setInterval(loadUnreadCount, 10000);
+
+    const handleNotificationsUpdated = () => {
+      loadUnreadCount();
+    };
+
+    window.addEventListener(
+      "notifications-updated",
+      handleNotificationsUpdated,
+    );
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener(
+        "notifications-updated",
+        handleNotificationsUpdated,
+      );
+    };
+  }, [user.id]);
 
   return (
     <div className="app-shell">
@@ -139,6 +184,7 @@ export function Shell({
         open={menu}
         close={() => setMenu(false)}
         onLogout={onLogout}
+        unreadCount={unreadCount}
       />
 
       {menu && <div className="scrim" onClick={() => setMenu(false)} />}
@@ -162,10 +208,14 @@ export function Shell({
             <button
               className="icon-btn"
               onClick={() => navigate("notifications")}
-              aria-label="Notifications"
+              aria-label={
+                unreadCount > 0
+                  ? `Notifications, ${unreadCount} unread`
+                  : "Notifications"
+              }
             >
               <Icon name="bell" />
-              <i />
+              {unreadCount > 0 && <i />}
             </button>
 
             <div className="profile">

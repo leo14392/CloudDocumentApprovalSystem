@@ -10,6 +10,7 @@ import { pool } from "./config/database.js";
 import authRoutes from "./routes/auth.routes.js";
 import requestRoutes from "./routes/request.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
+import notificationRoutes from "./routes/notification.routes.js";
 
 const app = express();
 
@@ -85,6 +86,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/requests", requestRoutes);
 
 app.use("/api/dashboard", dashboardRoutes);
+
+app.use("/api/notifications", notificationRoutes);
 
 app.listen(port, () => {
   console.log(`Backend running at http://localhost:${port}`);

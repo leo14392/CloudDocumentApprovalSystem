@@ -1,6 +1,79 @@
 
 import { randomUUID } from "node:crypto";
 import { pool } from "../config/database.js";
+import type { PoolClient } from "pg";
+
+// Notification Helper Function
+async function createSubmissionNotifications(
+  client: PoolClient,
+  data: {
+    requestId: string | number;
+    studentUserId: string;
+    referenceNumber: string;
+    documentName: string;
+    studentName: string;
+  }
+) {
+  // Notify the student.
+  await client.query(
+    `
+    INSERT INTO public.notifications (
+      user_id,
+      request_id,
+      notification_type,
+      title,
+      message
+    )
+    VALUES (
+      $1,
+      $2,
+      'submission_confirmation',
+      'Document submitted successfully',
+      $3
+    )
+    `,
+    [
+      data.studentUserId,
+      data.requestId,
+      `${data.documentName} (${data.referenceNumber}) was submitted successfully and is awaiting review.`
+    ]
+  );
+
+  // Notify active users with at least one non-student role.
+  await client.query(
+    `
+    INSERT INTO public.notifications (
+      user_id,
+      request_id,
+      notification_type,
+      title,
+      message
+    )
+    SELECT
+      u.user_id,
+      $1,
+      'new_request',
+      'New document awaiting review',
+      $2
+    FROM public.app_users u
+    WHERE u.is_active = TRUE
+      AND u.user_id <> $3
+      AND EXISTS (
+        SELECT 1
+        FROM public.user_roles ur
+        JOIN public.roles r
+          ON r.role_id = ur.role_id
+        WHERE ur.user_id = u.user_id
+          AND r.role_code <> 'STUDENT'
+      )
+    `,
+    [
+      data.requestId,
+      `${data.studentName} submitted ${data.documentName} (${data.referenceNumber}).`,
+      data.studentUserId
+    ]
+  );
+}
 
 export interface SubjectSubmission {
   course: string;
@@ -230,6 +303,14 @@ export async function createLoadRevisionRequest(
       );
     }
 
+    await createSubmissionNotifications(client, {
+      requestId: request.request_id,
+      studentUserId,
+      referenceNumber: request.reference_number,
+      documentName: "Shifter's Application Form",
+      studentName
+    });
+
     await client.query("COMMIT");
 
     return {
@@ -383,6 +464,14 @@ export async function createShifterApplicationRequest(
       ]
     );
 
+    await createSubmissionNotifications(client, {
+      requestId: request.request_id,
+      studentUserId,
+      referenceNumber: request.reference_number,
+      documentName: "Academic Load Revision Permit",
+      studentName
+    });
+
     await client.query("COMMIT");
 
     return {
@@ -528,6 +617,14 @@ export async function createLeaveOfAbsenceRequest(
         reason
       ]
     );
+
+    await createSubmissionNotifications(client, {
+      requestId: request.request_id,
+      studentUserId,
+      referenceNumber: request.reference_number,
+      documentName: "Leave of Absence Form",
+      studentName
+    });
 
     await client.query("COMMIT");
 
