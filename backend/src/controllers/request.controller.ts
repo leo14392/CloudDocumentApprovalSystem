@@ -7,7 +7,8 @@ import {
   createShifterApplicationRequest,
   createLeaveOfAbsenceRequest,
   getRequests,
-  getRequestDetails
+  getRequestDetails,
+  approveRequest
 } from "../services/request.service.js";
 
 const subjectSchema = z.object({
@@ -423,6 +424,72 @@ export async function getRequestDetailsController(
     return res.status(500).json({
       success: false,
       message: "Unable to retrieve request details."
+    });
+  }
+}
+
+export async function approveRequestController(
+  req: Request,
+  res: Response
+) {
+  const authenticatedUser = req.session.user;
+
+  if (!authenticatedUser) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required."
+    });
+  }
+
+  const referenceNumber = z.string()
+    .trim()
+    .min(1)
+    .max(50)
+    .safeParse(req.params.referenceNumber);
+
+  if (!referenceNumber.success) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid request reference number is required."
+    });
+  }
+
+  try {
+    const result = await approveRequest(
+      referenceNumber.data,
+      authenticatedUser.id
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      request: result.request
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Request not found.") {
+        return res.status(404).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      if (
+        error.message === "You are not assigned to approve this request." ||
+        error.message === "This request cannot be approved in its current state."
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
+
+    console.error("Request approval failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to approve this request."
     });
   }
 }

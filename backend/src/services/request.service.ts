@@ -3,7 +3,172 @@ import { randomUUID } from "node:crypto";
 import { pool } from "../config/database.js";
 import type { PoolClient } from "pg";
 
-// Notification Helper Function
+
+// Create the initial approval assignment for a newly submitted request.
+async function createInitialApprovalWorkflow(
+  client: PoolClient,
+  data: {
+    requestId: string | number;
+    studentUserId: string;
+    documentTypeId: number;
+    referenceNumber: string;
+    documentName: string;
+    studentName: string;
+  }
+) {
+  const assignmentResult = await client.query(
+    `
+      SELECT
+        aw.workflow_id,
+        aws.workflow_step_id,
+        sp.adviser_user_id,
+        adviser.email AS adviser_email
+      FROM public.student_profiles sp
+      JOIN public.app_users adviser
+        ON adviser.user_id = sp.adviser_user_id
+       AND adviser.is_active = TRUE
+      JOIN public.user_roles ur
+        ON ur.user_id = adviser.user_id
+      JOIN public.roles assigned_role
+        ON assigned_role.role_id = ur.role_id
+       AND assigned_role.role_code = 'ADVISER'
+      JOIN public.approval_workflows aw
+        ON aw.document_type_id = $2
+       AND aw.college_name = sp.college
+       AND aw.is_active = TRUE
+      JOIN public.approval_workflow_steps aws
+        ON aws.workflow_id = aw.workflow_id
+       AND aws.step_order = 1
+       AND aws.is_active = TRUE
+      JOIN public.roles step_role
+        ON step_role.role_id = aws.role_id
+       AND step_role.role_code = 'ADVISER'
+      WHERE sp.user_id = $1
+      FOR SHARE OF sp, adviser
+    `,
+    [data.studentUserId, data.documentTypeId]
+  );
+
+  if (assignmentResult.rowCount !== 1) {
+    throw new Error(
+      "The initial Academic Adviser assignment could not be resolved. Verify the student's assigned adviser and the active college workflow."
+    );
+  }
+
+  const assignment = assignmentResult.rows[0];
+
+  const instanceResult = await client.query(
+    `
+      INSERT INTO public.document_approval_instances (
+        request_id,
+        workflow_id,
+        current_step_id,
+        cycle_number,
+        status
+      )
+      VALUES ($1, $2, $3, 1, 'In Progress')
+      RETURNING instance_id
+    `,
+    [
+      data.requestId,
+      assignment.workflow_id,
+      assignment.workflow_step_id
+    ]
+  );
+
+  const instanceId = instanceResult.rows[0].instance_id;
+
+  const approvalResult = await client.query(
+    `
+      INSERT INTO public.document_approvals (
+        instance_id,
+        workflow_step_id,
+        cycle_number,
+        assigned_approver_user_id,
+        status
+      )
+      VALUES ($1, $2, 1, $3, 'Pending')
+      RETURNING approval_id
+    `,
+    [
+      instanceId,
+      assignment.workflow_step_id,
+      assignment.adviser_user_id
+    ]
+  );
+
+  const approvalId = approvalResult.rows[0].approval_id;
+
+  await client.query(
+    `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, NULL, $2, 'Submitted', NULL, $3, 1, $4)
+    `,
+    [
+      instanceId,
+      data.studentUserId,
+      assignment.workflow_step_id,
+      `${data.documentName} (${data.referenceNumber}) was submitted.`
+    ]
+  );
+
+  await client.query(
+    `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, $2, NULL, 'Assigned', NULL, $3, 1, $4)
+    `,
+    [
+      instanceId,
+      approvalId,
+      assignment.workflow_step_id,
+      `Assigned to the student's Academic Adviser (${assignment.adviser_email}).`
+    ]
+  );
+
+  await client.query(
+    `
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES (
+        $1,
+        $2,
+        'new_request',
+        'New document awaiting your review',
+        $3
+      )
+    `,
+    [
+      assignment.adviser_user_id,
+      data.requestId,
+      `${data.studentName} submitted ${data.documentName} (${data.referenceNumber}). It is awaiting your review.`
+    ]
+  );
+}
+
+// Notify the student that their submission was received.
 async function createSubmissionNotifications(
   client: PoolClient,
   data: {
@@ -11,66 +176,29 @@ async function createSubmissionNotifications(
     studentUserId: string;
     referenceNumber: string;
     documentName: string;
-    studentName: string;
   }
 ) {
-  // Notify the student.
   await client.query(
     `
-    INSERT INTO public.notifications (
-      user_id,
-      request_id,
-      notification_type,
-      title,
-      message
-    )
-    VALUES (
-      $1,
-      $2,
-      'submission_confirmation',
-      'Document submitted successfully',
-      $3
-    )
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES (
+        $1,
+        $2,
+        'submission_confirmation',
+        'Document submitted successfully',
+        $3
+      )
     `,
     [
       data.studentUserId,
       data.requestId,
       `${data.documentName} (${data.referenceNumber}) was submitted successfully and is awaiting review.`
-    ]
-  );
-
-  // Notify active users with at least one non-student role.
-  await client.query(
-    `
-    INSERT INTO public.notifications (
-      user_id,
-      request_id,
-      notification_type,
-      title,
-      message
-    )
-    SELECT
-      u.user_id,
-      $1,
-      'new_request',
-      'New document awaiting review',
-      $2
-    FROM public.app_users u
-    WHERE u.is_active = TRUE
-      AND u.user_id <> $3
-      AND EXISTS (
-        SELECT 1
-        FROM public.user_roles ur
-        JOIN public.roles r
-          ON r.role_id = ur.role_id
-        WHERE ur.user_id = u.user_id
-          AND r.role_code <> 'STUDENT'
-      )
-    `,
-    [
-      data.requestId,
-      `${data.studentName} submitted ${data.documentName} (${data.referenceNumber}).`,
-      data.studentUserId
     ]
   );
 }
@@ -303,12 +431,20 @@ export async function createLoadRevisionRequest(
       );
     }
 
+    await createInitialApprovalWorkflow(client, {
+      requestId: request.request_id,
+      studentUserId,
+      documentTypeId: documentTypeResult.rows[0].document_type_id,
+      referenceNumber: request.reference_number,
+      documentName: "Academic Load Revision Permit",
+      studentName
+    });
+
     await createSubmissionNotifications(client, {
       requestId: request.request_id,
       studentUserId,
       referenceNumber: request.reference_number,
-      documentName: "Shifter's Application Form",
-      studentName
+      documentName: "Academic Load Revision Permit"
     });
 
     await client.query("COMMIT");
@@ -464,12 +600,20 @@ export async function createShifterApplicationRequest(
       ]
     );
 
+    await createInitialApprovalWorkflow(client, {
+      requestId: request.request_id,
+      studentUserId,
+      documentTypeId: documentTypeResult.rows[0].document_type_id,
+      referenceNumber: request.reference_number,
+      documentName: "Shifter's Application Form",
+      studentName
+    });
+
     await createSubmissionNotifications(client, {
       requestId: request.request_id,
       studentUserId,
       referenceNumber: request.reference_number,
-      documentName: "Academic Load Revision Permit",
-      studentName
+      documentName: "Shifter's Application Form"
     });
 
     await client.query("COMMIT");
@@ -618,12 +762,20 @@ export async function createLeaveOfAbsenceRequest(
       ]
     );
 
+    await createInitialApprovalWorkflow(client, {
+      requestId: request.request_id,
+      studentUserId,
+      documentTypeId: documentTypeResult.rows[0].document_type_id,
+      referenceNumber: request.reference_number,
+      documentName: "Leave of Absence Form",
+      studentName
+    });
+
     await createSubmissionNotifications(client, {
       requestId: request.request_id,
       studentUserId,
       referenceNumber: request.reference_number,
-      documentName: "Leave of Absence Form",
-      studentName
+      documentName: "Leave of Absence Form"
     });
 
     await client.query("COMMIT");
@@ -863,4 +1015,480 @@ export async function getRequestDetails(
 
     details
   };
+}
+
+export async function approveRequest(
+  referenceNumber: string,
+  approverUserId: string
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Lock the request, workflow instance, and current approval.
+    const currentResult = await client.query(
+      `
+      SELECT
+        dr.request_id,
+        dr.reference_number,
+        dr.status AS request_status,
+        dr.student_user_id,
+        dr.completed_at,
+
+        dai.instance_id,
+        dai.workflow_id,
+        dai.current_step_id,
+        dai.cycle_number,
+        dai.status AS instance_status,
+
+        da.approval_id,
+        da.assigned_approver_user_id,
+        da.status AS approval_status,
+
+        aws.step_order,
+        aws.step_name,
+
+        sp.college,
+        sp.department
+
+      FROM public.document_requests dr
+
+      JOIN public.document_approval_instances dai
+        ON dai.request_id = dr.request_id
+
+      JOIN public.document_approvals da
+        ON da.instance_id = dai.instance_id
+       AND da.workflow_step_id = dai.current_step_id
+       AND da.cycle_number = dai.cycle_number
+
+      JOIN public.approval_workflow_steps aws
+        ON aws.workflow_step_id = dai.current_step_id
+
+      JOIN public.student_profiles sp
+        ON sp.user_id = dr.student_user_id
+
+      WHERE dr.reference_number = $1
+
+      FOR UPDATE OF dr, dai, da
+      `,
+      [referenceNumber]
+    );
+
+    if (currentResult.rowCount !== 1) {
+      throw new Error("Request not found.");
+    }
+
+    const current = currentResult.rows[0];
+
+    if (
+      current.assigned_approver_user_id.toString() !==
+      approverUserId
+    ) {
+      throw new Error(
+        "You are not assigned to approve this request."
+      );
+    }
+
+    if (
+      current.approval_status !== "Pending" ||
+      current.instance_status !== "In Progress" ||
+      current.request_status !== "Pending"
+    ) {
+      throw new Error(
+        "This request cannot be approved in its current state."
+      );
+    }
+
+    // Verify that the assigned account is still active.
+    const activeApproverResult = await client.query(
+      `
+      SELECT 1
+      FROM public.app_users
+      WHERE user_id = $1
+        AND is_active = TRUE
+      `,
+      [approverUserId]
+    );
+
+    if (activeApproverResult.rowCount !== 1) {
+      throw new Error(
+        "You are not assigned to approve this request."
+      );
+    }
+
+    // Find the next active workflow stage.
+    const nextStepResult = await client.query(
+      `
+      SELECT
+        aws.workflow_step_id,
+        aws.step_order,
+        aws.step_name,
+        r.role_code
+      FROM public.approval_workflow_steps aws
+      JOIN public.roles r
+        ON r.role_id = aws.role_id
+      WHERE aws.workflow_id = $1
+        AND aws.step_order > $2
+        AND aws.is_active = TRUE
+      ORDER BY aws.step_order ASC
+      LIMIT 1
+      `,
+      [current.workflow_id, current.step_order]
+    );
+
+    // Mark the current approval as approved.
+    await client.query(
+      `
+      UPDATE public.document_approvals
+      SET
+        status = 'Approved',
+        acted_at = NOW()
+      WHERE approval_id = $1
+        AND status = 'Pending'
+      `,
+      [current.approval_id]
+    );
+
+    if (nextStepResult.rowCount === 0) {
+      // No further stage: this is the final approval.
+      await client.query(
+        `
+        UPDATE public.document_approval_instances
+        SET
+          current_step_id = NULL,
+          status = 'Approved',
+          completed_at = NOW()
+        WHERE instance_id = $1
+        `,
+        [current.instance_id]
+      );
+
+      await client.query(
+        `
+        UPDATE public.document_requests
+        SET
+          status = 'Completed',
+          completed_at = NOW()
+        WHERE request_id = $1
+        `,
+        [current.request_id]
+      );
+
+      await client.query(
+        `
+        INSERT INTO public.document_approval_history (
+          instance_id,
+          approval_id,
+          actor_user_id,
+          action,
+          from_step_id,
+          to_step_id,
+          cycle_number,
+          remarks
+        )
+        VALUES ($1, $2, $3, 'Approved', $4, NULL, $5, $6)
+        `,
+        [
+          current.instance_id,
+          current.approval_id,
+          approverUserId,
+          current.current_step_id,
+          current.cycle_number,
+          `${current.step_name} approved the request.`
+        ]
+      );
+
+      await client.query(
+        `
+        INSERT INTO public.document_approval_history (
+          instance_id,
+          approval_id,
+          actor_user_id,
+          action,
+          from_step_id,
+          to_step_id,
+          cycle_number,
+          remarks
+        )
+        VALUES ($1, NULL, $2, 'Completed', $3, NULL, $4, $5)
+        `,
+        [
+          current.instance_id,
+          approverUserId,
+          current.current_step_id,
+          current.cycle_number,
+          "All approval stages have been completed."
+        ]
+      );
+
+      await client.query(
+        `
+        INSERT INTO public.notifications (
+          user_id,
+          request_id,
+          notification_type,
+          title,
+          message
+        )
+        VALUES (
+          $1,
+          $2,
+          'request_completed',
+          'Document request completed',
+          $3
+        )
+        `,
+        [
+          current.student_user_id,
+          current.request_id,
+          `Your document request (${current.reference_number}) has been fully approved.`
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      return {
+        message: "Request approved. All workflow stages are complete.",
+        request: {
+          referenceNumber: current.reference_number,
+          status: "Completed",
+          currentStage: null
+        }
+      };
+    }
+
+    const nextStep = nextStepResult.rows[0];
+
+    // Resolve the next approver using their role and personnel profile.
+    let nextApproverResult;
+
+    switch (nextStep.role_code) {
+      case "ADVISER": {
+        nextApproverResult = await client.query(
+          `
+          SELECT
+            u.user_id,
+            u.email
+          FROM public.student_profiles sp
+          JOIN public.app_users u
+            ON u.user_id = sp.adviser_user_id
+           AND u.is_active = TRUE
+          JOIN public.user_roles ur
+            ON ur.user_id = u.user_id
+          JOIN public.roles r
+            ON r.role_id = ur.role_id
+           AND r.role_code = 'ADVISER'
+          WHERE sp.user_id = $1
+          `,
+          [current.student_user_id]
+        );
+        break;
+      }
+
+      case "CHAIRPERSON": {
+        nextApproverResult = await client.query(
+          `
+          SELECT
+            u.user_id,
+            u.email
+          FROM public.personnel_profiles pp
+          JOIN public.app_users u
+            ON u.user_id = pp.user_id
+           AND u.is_active = TRUE
+          JOIN public.user_roles ur
+            ON ur.user_id = u.user_id
+          JOIN public.roles r
+            ON r.role_id = ur.role_id
+           AND r.role_code = 'CHAIRPERSON'
+          WHERE pp.college = $1
+            AND pp.department = $2
+          `,
+          [current.college, current.department]
+        );
+        break;
+      }
+
+      case "DEAN": {
+        nextApproverResult = await client.query(
+          `
+          SELECT
+            u.user_id,
+            u.email
+          FROM public.personnel_profiles pp
+          JOIN public.app_users u
+            ON u.user_id = pp.user_id
+           AND u.is_active = TRUE
+          JOIN public.user_roles ur
+            ON ur.user_id = u.user_id
+          JOIN public.roles r
+            ON r.role_id = ur.role_id
+           AND r.role_code = 'DEAN'
+          WHERE pp.college = $1
+          `,
+          [current.college]
+        );
+        break;
+      }
+
+      case "REGISTRAR": {
+        nextApproverResult = await client.query(
+          `
+          SELECT
+            u.user_id,
+            u.email
+          FROM public.app_users u
+          JOIN public.user_roles ur
+            ON ur.user_id = u.user_id
+          JOIN public.roles r
+            ON r.role_id = ur.role_id
+           AND r.role_code = 'REGISTRAR'
+          WHERE u.is_active = TRUE
+          `
+        );
+        break;
+      }
+
+      default:
+        throw new Error(
+          `Unsupported workflow role: ${nextStep.role_code}`
+        );
+    }
+
+    if (nextApproverResult.rowCount !== 1) {
+      throw new Error(
+        `The next approver could not be resolved for workflow role ${nextStep.role_code}.`
+      );
+    }
+
+    const nextApprover = nextApproverResult.rows[0];
+
+    // Create the next pending approval.
+    const nextApprovalResult = await client.query(
+      `
+      INSERT INTO public.document_approvals (
+        instance_id,
+        workflow_step_id,
+        cycle_number,
+        assigned_approver_user_id,
+        status
+      )
+      VALUES ($1, $2, $3, $4, 'Pending')
+      RETURNING approval_id
+      `,
+      [
+        current.instance_id,
+        nextStep.workflow_step_id,
+        current.cycle_number,
+        nextApprover.user_id
+      ]
+    );
+
+    const nextApprovalId = nextApprovalResult.rows[0].approval_id;
+
+    // Move the workflow to the next stage.
+    await client.query(
+      `
+      UPDATE public.document_approval_instances
+      SET current_step_id = $1
+      WHERE instance_id = $2
+      `,
+      [
+        nextStep.workflow_step_id,
+        current.instance_id
+      ]
+    );
+
+    // Record the current approval.
+    await client.query(
+      `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, $2, $3, 'Approved', $4, $5, $6, $7)
+      `,
+      [
+        current.instance_id,
+        current.approval_id,
+        approverUserId,
+        current.current_step_id,
+        nextStep.workflow_step_id,
+        current.cycle_number,
+        `${current.step_name} approved the request.`
+      ]
+    );
+
+    // Record the next assignment.
+    await client.query(
+      `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, $2, NULL, 'Assigned', $3, $4, $5, $6)
+      `,
+      [
+        current.instance_id,
+        nextApprovalId,
+        current.current_step_id,
+        nextStep.workflow_step_id,
+        current.cycle_number,
+        `Assigned to ${nextStep.step_name} (${nextApprover.email}).`
+      ]
+    );
+
+    // Notify the newly assigned approver.
+    await client.query(
+      `
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES (
+        $1,
+        $2,
+        'new_request',
+        'Document awaiting your review',
+        $3
+      )
+      `,
+      [
+        nextApprover.user_id,
+        current.request_id,
+        `Request ${current.reference_number} has been approved by ${current.step_name} and is awaiting your review.`
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      message: `Request approved and forwarded to ${nextStep.step_name}.`,
+      request: {
+        referenceNumber: current.reference_number,
+        status: "Pending",
+        currentStage: nextStep.step_name
+      }
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

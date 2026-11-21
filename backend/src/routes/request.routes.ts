@@ -11,7 +11,8 @@ import {
   createShifterApplication,
   createLeaveOfAbsence,
   getRequestsController,
-  getRequestDetailsController
+  getRequestDetailsController,
+  approveRequestController
 } from "../controllers/request.controller.js";
 
 const router = Router();
@@ -52,6 +53,14 @@ router.get(
   "/:referenceNumber",
   requireAuth,
   getRequestDetailsController
+);
+
+// Approve the current workflow step
+router.post(
+  "/:referenceNumber/approve",
+  requireAuth,
+  requireRole("ADVISER", "CHAIRPERSON", "DEAN", "REGISTRAR"),
+  approveRequestController
 );
 
 export default router;

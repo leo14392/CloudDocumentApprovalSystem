@@ -74,3 +74,11 @@ Recommended development roadmap PHASE 3
 5. 5. Test the complete workflow
 
    Test every document type using the demo student, adviser, chairperson, dean, and registrar accounts.
+
+6. Recommended next development tasks
+   I recommend this order:
+7. Approver access control: Restrict request lists and details to users authorized to view them. This is particularly important because the current service implementation allows non-students to see all requests.
+8. Rejection workflow: Allow an assigned approver to reject a request, record remarks, and update its status.
+9. Return-for-revision workflow: Allow an approver to return a request to the student, then handle resubmission.
+10. Frontend integration: Connect the Review page to the working approval endpoint.
+11. Security and edge-case testing: Test wrong users, duplicate approvals, inactive accounts, and invalid workflow states.
