@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { RequestItem, Role } from "../../types";
+import type { RequestItem, Role, LoadRevisionPermit } from "../../types";
 import { Button, Icon, Info, StatusBadge } from "../../components/ui";
+import { defaultPermit } from "../../data/initialData";
 import {
   getRequestDetailsApi,
   type RequestDetail,
@@ -235,6 +236,49 @@ function ShifterInformation({
   );
 }
 
+function mapLoadRevisionToPermit(
+  details: LoadRevisionDetails,
+  student: RequestDetail["student"],
+): LoadRevisionPermit {
+  return {
+    ...defaultPermit,
+    term: details.academic_term as LoadRevisionPermit["term"],
+    schoolYear: details.school_year,
+    familyName: details.family_name || student.familyName || "",
+    givenName: details.given_name || student.givenName || "",
+    middleName: details.middle_name ?? student.middleName ?? "",
+    studentId: details.student_number || student.studentNumber || "",
+    permitDate: details.permit_date?.slice(0, 10) || "",
+    college: details.college || student.college || "",
+    department: details.department || student.department || "",
+    courseYear: details.course_year || "",
+    withdraw: details.subjects
+      .filter((subject) => subject.revision_action === "WITHDRAW")
+      .map((subject) => ({
+        course: subject.course_number_section,
+        title: subject.course_title,
+        units: String(subject.units),
+        closed: false,
+      })),
+    add: details.subjects
+      .filter((subject) => subject.revision_action === "ADD")
+      .map((subject) => ({
+        course: subject.course_number_section,
+        title: subject.course_title,
+        units: String(subject.units),
+        closed: subject.is_closed_subject,
+      })),
+    loadBeforeUnits: String(details.load_before_units ?? ""),
+    loadBeforeHours: String(details.load_before_hours ?? ""),
+    loadAfterUnits: String(details.load_after_units ?? ""),
+    loadAfterHours: String(details.load_after_hours ?? ""),
+    conflict: details.conflict_of_schedule,
+    dissolved: details.subjects_dissolved,
+    otherReason: details.other_reason ?? "",
+    studentSignature: details.student_signature_name || "",
+  };
+}
+
 function LeaveInformation({ details }: { details: LeaveOfAbsenceDetails }) {
   return (
     <section className="card info-card">
@@ -263,11 +307,19 @@ export function Detail({
   role,
   back,
   review,
+  editRevision,
 }: {
   request: RequestItem;
   role: Role;
   back: () => void;
   review?: () => void;
+  editRevision?: (
+    data:
+      | LoadRevisionPermit
+      | ShifterApplicationDetails
+      | LeaveOfAbsenceDetails,
+    documentCode: string,
+  ) => void;
 }) {
   const [details, setDetails] = useState<RequestDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -332,6 +384,42 @@ export function Detail({
 
         <div className="detail-actions">
           <StatusBadge status={request.status} />
+
+          {role === "student" &&
+            request.status === "Returned for Revision" &&
+            details &&
+            ["LOAD_REVISION", "SHIFT_APPLICATION", "LEAVE_ABSENCE"].includes(
+              details.documentCode,
+            ) &&
+            editRevision && (
+              <Button
+                onClick={() => {
+                  if (!details.details || !editRevision) return;
+
+                  if (details.documentCode === "LOAD_REVISION") {
+                    editRevision(
+                      mapLoadRevisionToPermit(
+                        details.details as LoadRevisionDetails,
+                        details.student,
+                      ),
+                      details.documentCode,
+                    );
+                  } else if (details.documentCode === "SHIFT_APPLICATION") {
+                    editRevision(
+                      details.details as ShifterApplicationDetails,
+                      details.documentCode,
+                    );
+                  } else if (details.documentCode === "LEAVE_ABSENCE") {
+                    editRevision(
+                      details.details as LeaveOfAbsenceDetails,
+                      details.documentCode,
+                    );
+                  }
+                }}
+              >
+                Edit and Resubmit
+              </Button>
+            )}
 
           {request.status === "Completed" && (
             <Button icon="download" disabled>

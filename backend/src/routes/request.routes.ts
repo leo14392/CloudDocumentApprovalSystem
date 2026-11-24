@@ -12,7 +12,10 @@ import {
   createLeaveOfAbsence,
   getRequestsController,
   getRequestDetailsController,
-  approveRequestController
+  approveRequestController,
+  rejectRequestController,
+  returnRequestController,
+  resubmitRequestController
 } from "../controllers/request.controller.js";
 
 const router = Router();
@@ -61,6 +64,27 @@ router.post(
   requireAuth,
   requireRole("ADVISER", "CHAIRPERSON", "DEAN", "REGISTRAR"),
   approveRequestController
+);
+
+router.post(
+  "/:referenceNumber/reject",
+  requireAuth,
+  requireRole("ADVISER", "CHAIRPERSON", "DEAN", "REGISTRAR"),
+  rejectRequestController
+);
+
+router.post(
+  "/:referenceNumber/return",
+  requireAuth,
+  requireRole("ADVISER", "CHAIRPERSON", "DEAN", "REGISTRAR"),
+  returnRequestController
+);
+
+router.post(
+  "/:referenceNumber/resubmit",
+  requireAuth,
+  requireRole("STUDENT"),
+  resubmitRequestController
 );
 
 export default router;

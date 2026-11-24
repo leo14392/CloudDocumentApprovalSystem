@@ -219,12 +219,12 @@ interface ApproverRequestQueryRow {
 }
 
 function mapApproverRequest(
-  row: ApproverRequestQueryRow
+  row: ApproverRequestQueryRow,
 ): ApproverDashboardRequest {
   const studentName = [
     row.given_name,
     row.middle_name,
-    row.family_name
+    row.family_name,
   ]
     .filter(Boolean)
     .join(" ");
@@ -236,84 +236,145 @@ function mapApproverRequest(
     studentName,
     studentNumber: row.student_number,
     status: row.status,
-    submittedAt: new Date(row.submitted_at).toISOString()
+    submittedAt: new Date(row.submitted_at).toISOString(),
   };
 }
 
-export async function getApproverDashboard(): Promise<ApproverDashboardData> {
+export async function getApproverDashboard(
+  userId: string,
+): Promise<ApproverDashboardData> {
+  // Statistics are limited to requests assigned to this approver.
   const statsResult = await pool.query<StatsQueryRow>(
     `
       SELECT
-        COUNT(*)::int AS total,
+        COUNT(DISTINCT dr.request_id)::int AS total,
 
-        COUNT(*) FILTER (
-          WHERE status = 'Pending'
+        COUNT(DISTINCT dr.request_id) FILTER (
+          WHERE da.status = 'Pending'
+            AND dai.status = 'In Progress'
+            AND dai.current_step_id = da.workflow_step_id
+            AND dai.cycle_number = da.cycle_number
         )::int AS pending,
 
-        COUNT(*) FILTER (
-          WHERE status = 'Approved'
+        COUNT(DISTINCT dr.request_id) FILTER (
+          WHERE da.status = 'Approved'
         )::int AS approved,
 
-        COUNT(*) FILTER (
-          WHERE status = 'Rejected'
+        COUNT(DISTINCT dr.request_id) FILTER (
+          WHERE da.status = 'Rejected'
         )::int AS rejected,
 
-        COUNT(*) FILTER (
-          WHERE status = 'Returned for Revision'
+        COUNT(DISTINCT dr.request_id) FILTER (
+          WHERE da.status = 'Returned for Revision'
         )::int AS returned,
 
-        COUNT(*) FILTER (
-          WHERE status = 'Completed'
+        COUNT(DISTINCT dr.request_id) FILTER (
+          WHERE dr.status = 'Completed'
         )::int AS completed
 
-      FROM document_requests
-      WHERE submitted_at IS NOT NULL
-        AND status <> 'Draft'
-    `
+      FROM public.document_approvals da
+
+      INNER JOIN public.document_approval_instances dai
+        ON dai.instance_id = da.instance_id
+
+      INNER JOIN public.document_requests dr
+        ON dr.request_id = dai.request_id
+
+      WHERE da.assigned_approver_user_id = $1
+        AND dr.submitted_at IS NOT NULL
+        AND dr.status <> 'Draft'
+    `,
+    [userId],
   );
 
-  const requestQuery = `
-    SELECT
-      dr.request_id AS id,
-      dr.reference_number,
-      dt.document_name,
-      au.given_name,
-      au.middle_name,
-      au.family_name,
-      sp.student_number,
-      dr.status,
-      dr.submitted_at
-
-    FROM document_requests dr
-
-    INNER JOIN document_types dt
-      ON dt.document_type_id = dr.document_type_id
-
-    INNER JOIN app_users au
-      ON au.user_id = dr.student_user_id
-
-    LEFT JOIN student_profiles sp
-      ON sp.user_id = dr.student_user_id
-
-    WHERE dr.submitted_at IS NOT NULL
-      AND dr.status <> 'Draft'
-  `;
-
+  // Requests assigned to this approver at any stage.
+  // EXISTS prevents duplicate request rows.
   const recentResult = await pool.query<ApproverRequestQueryRow>(
     `
-      ${requestQuery}
+      SELECT
+        dr.request_id AS id,
+        dr.reference_number,
+        dt.document_name,
+        au.given_name,
+        au.middle_name,
+        au.family_name,
+        sp.student_number,
+        dr.status,
+        dr.submitted_at
+
+      FROM public.document_requests dr
+
+      INNER JOIN public.document_types dt
+        ON dt.document_type_id = dr.document_type_id
+
+      INNER JOIN public.app_users au
+        ON au.user_id = dr.student_user_id
+
+      LEFT JOIN public.student_profiles sp
+        ON sp.user_id = dr.student_user_id
+
+      WHERE dr.submitted_at IS NOT NULL
+        AND dr.status <> 'Draft'
+
+        AND EXISTS (
+          SELECT 1
+          FROM public.document_approval_instances dai
+          INNER JOIN public.document_approvals da
+            ON da.instance_id = dai.instance_id
+          WHERE dai.request_id = dr.request_id
+            AND da.assigned_approver_user_id = $1
+        )
+
       ORDER BY dr.submitted_at DESC, dr.request_id DESC
       LIMIT 6
-    `
+    `,
+    [userId],
   );
 
+  // Only requests assigned to this approver at the CURRENT
+  // workflow step and CURRENT cycle may appear in the pending queue.
   const pendingResult = await pool.query<ApproverRequestQueryRow>(
     `
-      ${requestQuery}
+      SELECT
+        dr.request_id AS id,
+        dr.reference_number,
+        dt.document_name,
+        au.given_name,
+        au.middle_name,
+        au.family_name,
+        sp.student_number,
+        dr.status,
+        dr.submitted_at
+
+      FROM public.document_requests dr
+
+      INNER JOIN public.document_types dt
+        ON dt.document_type_id = dr.document_type_id
+
+      INNER JOIN public.app_users au
+        ON au.user_id = dr.student_user_id
+
+      LEFT JOIN public.student_profiles sp
+        ON sp.user_id = dr.student_user_id
+
+      INNER JOIN public.document_approval_instances dai
+        ON dai.request_id = dr.request_id
+
+      INNER JOIN public.document_approvals da
+        ON da.instance_id = dai.instance_id
+       AND da.workflow_step_id = dai.current_step_id
+       AND da.cycle_number = dai.cycle_number
+
+      WHERE dr.submitted_at IS NOT NULL
         AND dr.status = 'Pending'
+        AND dai.status = 'In Progress'
+        AND da.status = 'Pending'
+        AND da.assigned_approver_user_id = $1
+
       ORDER BY dr.submitted_at ASC, dr.request_id ASC
       LIMIT 6
-    `
+    `,
+    [userId],
   );
 
   const statsRow = statsResult.rows[0];
@@ -324,12 +385,12 @@ export async function getApproverDashboard(): Promise<ApproverDashboardData> {
     approved: statsRow?.approved ?? 0,
     rejected: statsRow?.rejected ?? 0,
     returned: statsRow?.returned ?? 0,
-    completed: statsRow?.completed ?? 0
+    completed: statsRow?.completed ?? 0,
   };
 
   return {
     stats,
     recentRequests: recentResult.rows.map(mapApproverRequest),
-    pendingRequests: pendingResult.rows.map(mapApproverRequest)
+    pendingRequests: pendingResult.rows.map(mapApproverRequest),
   };
 }

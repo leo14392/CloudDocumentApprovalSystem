@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
 import type { LoadRevisionPermit, RequestItem, Status } from "../../types";
+
 import {
   Button,
   Icon,
@@ -8,7 +10,13 @@ import {
   PermitSignature,
   StatusBadge,
 } from "../../components/ui";
+
 import { defaultPermit, isLoadRevision } from "../../data/initialData";
+
+import {
+  getRequestDetailsApi,
+  type ApprovalHistoryItem,
+} from "../../lib/requests";
 
 export function GenericReviewPage({
   request,
@@ -22,12 +30,90 @@ export function GenericReviewPage({
   const [dialog, setDialog] = useState<"approve" | "reject" | "return" | null>(
     null,
   );
+
   const [comment, setComment] = useState("");
+
+  // Approval history state
+  const [approvalHistory, setApprovalHistory] = useState<ApprovalHistoryItem[]>(
+    [],
+  );
+
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState(false);
+
+  // Fetch approval history for the selected request.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadApprovalHistory() {
+      setHistoryLoading(true);
+      setHistoryError(false);
+
+      try {
+        const requestDetails = await getRequestDetailsApi(request.id);
+
+        if (!cancelled) {
+          setApprovalHistory(requestDetails.approvalHistory ?? []);
+        }
+      } catch (error) {
+        console.error("Unable to load approval history:", error);
+
+        if (!cancelled) {
+          setApprovalHistory([]);
+          setHistoryError(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setHistoryLoading(false);
+        }
+      }
+    }
+
+    loadApprovalHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [request.id]);
+
+  // Only show actual approval events.
+  const approvedEntries = approvalHistory.filter(
+    (entry) => entry.action === "Approved",
+  );
+
+  // The API returns history in chronological order.
+  const previousApproval =
+    approvedEntries.length > 0
+      ? approvedEntries[approvedEntries.length - 1]
+      : null;
+
+  // Generate initials from the approver's name.
+  const approvalInitials = previousApproval?.actorName
+    ? previousApproval.actorName
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((part) => part[0])
+        .slice(0, 2)
+        .join("")
+        .toUpperCase()
+    : "?";
+
+  // Format the approval date.
+  const approvalDate = previousApproval?.createdAt
+    ? new Date(previousApproval.createdAt).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "";
+
   return (
     <>
       <button className="back-link" onClick={back}>
         ← Back to approval queue
       </button>
+
       <div className="review-top">
         <div>
           <span>{request.id}</span>
@@ -36,21 +122,26 @@ export function GenericReviewPage({
             Submitted by {request.student} · {request.date}
           </p>
         </div>
+
         <StatusBadge status="Pending" />
       </div>
+
       <div className="review-grid">
         <section className="document-preview">
           <div className="preview-bar">
             <span>Document preview</span>
+
             <div>
               <button>−</button>
               <b>100%</b>
               <button>+</button>
+
               <button>
                 <Icon name="download" size={16} />
               </button>
             </div>
           </div>
+
           <div className="paper">
             <div className="paper-brand">
               <div className="mini-seal">
@@ -58,26 +149,32 @@ export function GenericReviewPage({
                 <br />
                 IIT
               </div>
+
               <div>
                 <strong>Mindanao State University</strong>
                 <span>Iligan Institute of Technology</span>
                 <small>OFFICE OF THE UNIVERSITY REGISTRAR</small>
               </div>
             </div>
+
             <hr />
+
             <h3>{request.type.toUpperCase()}</h3>
+
             <div className="paper-row">
               <span>Student Name</span>
               <b>{request.student}</b>
               <span>Student ID</span>
               <b>2021-1234</b>
             </div>
+
             <div className="paper-row">
               <span>Program</span>
               <b>BS Information Technology</b>
               <span>Year Level</span>
               <b>4th Year</b>
             </div>
+
             <div className="paper-block">
               <span>Reason for request</span>
               <p>
@@ -85,16 +182,19 @@ export function GenericReviewPage({
                 prerequisite sequence advised by my program coordinator.
               </p>
             </div>
+
             <div className="signature-lines">
               <div>
                 <i />
                 <span>Student signature</span>
               </div>
+
               <div>
                 <i />
                 <span>Program Adviser</span>
                 <em>Approved</em>
               </div>
+
               <div>
                 <i />
                 <span>Department Chair</span>
@@ -102,34 +202,63 @@ export function GenericReviewPage({
             </div>
           </div>
         </section>
+
         <aside className="review-panel">
           <div className="review-tabs">
             <button className="active">Details</button>
             <button>History</button>
           </div>
+
           <div className="review-section">
             <h3>Student information</h3>
+
             <Info label="Student ID" value="2021-1234" />
             <Info label="Email" value="andrea.santos@g.msuiit.edu.ph" />
             <Info label="Program" value="BS Information Technology" />
+
             <Button variant="ghost" icon="mail">
               Contact student
             </Button>
           </div>
+
+          {/* Dynamic previous approval */}
           <div className="review-section">
             <h3>Previous approval</h3>
-            <div className="previous">
-              <span className="avatar tiny dark">RF</span>
-              <div>
-                <strong>Prof. Ramon Flores</strong>
-                <small>Program Adviser · Approved May 23</small>
-                <p>Academic load and prerequisites verified.</p>
+
+            {historyLoading ? (
+              <p>Loading approval history...</p>
+            ) : historyError ? (
+              <p>
+                Unable to load approval history. Please refresh or try again.
+              </p>
+            ) : previousApproval ? (
+              <div className="previous">
+                <span className="avatar tiny dark">{approvalInitials}</span>
+
+                <div>
+                  <strong>
+                    {previousApproval.actorName || "Unknown approver"}
+                  </strong>
+
+                  <small>
+                    {previousApproval.actorRole || "Approver"}
+                    {" · "}
+                    Approved {approvalDate}
+                  </small>
+
+                  <p>{previousApproval.remarks || "No remarks provided."}</p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <p>No previous approvals yet.</p>
+            )}
           </div>
+
           <div className="action-box">
             <span className="eyebrow">Your decision</span>
+
             <p>Review all submitted information before taking action.</p>
+
             <Button
               variant="success"
               icon="check"
@@ -137,10 +266,12 @@ export function GenericReviewPage({
             >
               Approve and sign
             </Button>
+
             <div>
               <Button variant="secondary" onClick={() => setDialog("return")}>
                 Return for revision
               </Button>
+
               <Button variant="danger" onClick={() => setDialog("reject")}>
                 Reject
               </Button>
@@ -148,6 +279,7 @@ export function GenericReviewPage({
           </div>
         </aside>
       </div>
+
       {dialog && (
         <Modal
           title={
@@ -170,11 +302,13 @@ export function GenericReviewPage({
               }
             />
           </div>
+
           <p>
             {dialog === "approve"
               ? "Your saved e-signature will be applied and the document will move to the next approval stage."
               : "Provide a clear reason. The student will receive this message with the status update."}
           </p>
+
           {dialog !== "approve" && (
             <textarea
               rows={4}
@@ -187,10 +321,12 @@ export function GenericReviewPage({
               }
             />
           )}
+
           <div className="modal-actions">
             <Button variant="secondary" onClick={() => setDialog(null)}>
               Cancel
             </Button>
+
             <Button
               variant={
                 dialog === "approve"
@@ -219,6 +355,7 @@ export function GenericReviewPage({
     </>
   );
 }
+
 export function OfficialPermitPreview({
   permit,
 }: {
@@ -226,6 +363,7 @@ export function OfficialPermitPreview({
 }) {
   const fullName =
     `${permit.familyName}, ${permit.givenName} ${permit.middleName}`.trim();
+
   return (
     <div className="official-paper">
       <div className="official-header">
@@ -234,10 +372,12 @@ export function OfficialPermitPreview({
           <br />
           IIT
         </div>
+
         <div>
           <strong>ILIGAN INSTITUTE OF TECHNOLOGY</strong>
           <span>MINDANAO STATE UNIVERSITY</span>
         </div>
+
         <div className="document-meta">
           <span>OFFICE OF THE REGISTRAR</span>
           <b>Document Code No.</b>
@@ -245,9 +385,12 @@ export function OfficialPermitPreview({
           <small>Revision No. 00 · Effective 02.20.2020 · Page 1 of 1</small>
         </div>
       </div>
+
       <h3>ACADEMIC LOAD REVISION PERMIT</h3>
+
       <div className="permit-part">
         <b>PART 1</b>
+
         <div className="permit-term">
           <span>{permit.term === "1st Semester" ? "☒" : "☐"} 1ST Semester</span>
           <span>{permit.term === "2nd Semester" ? "☒" : "☐"} 2ND Semester</span>
@@ -255,44 +398,55 @@ export function OfficialPermitPreview({
           <strong>School Year: {permit.schoolYear}</strong>
         </div>
       </div>
+
       <div className="permit-part">
         <b>PART 2</b>
+
         <div className="permit-columns">
           <div>
             <small>FULL NAME (Family, Given, Middle)</small>
             <strong>{fullName}</strong>
           </div>
+
           <div>
             <small>I.D. No.</small>
             <strong>{permit.studentId}</strong>
           </div>
+
           <div>
             <small>Date</small>
             <strong>{permit.permitDate}</strong>
           </div>
         </div>
       </div>
+
       <div className="permit-part">
         <b>PART 3</b>
+
         <div className="permit-columns">
           <div>
             <small>COLLEGE / SCHOOL</small>
             <strong>{permit.college}</strong>
           </div>
+
           <div>
             <small>DEPARTMENT</small>
             <strong>{permit.department}</strong>
           </div>
+
           <div>
             <small>COURSE & YEAR</small>
             <strong>{permit.courseYear}</strong>
           </div>
         </div>
       </div>
+
       <div className="permit-part subject-part">
         <b>PART 4</b>
+
         <div>
           <h4>WITHDRAW from the following subject/s:</h4>
+
           <div className="permit-subject-head">
             <span>COURSE NO. & SEC.</span>
             <span>COURSE TITLE</span>
@@ -300,21 +454,25 @@ export function OfficialPermitPreview({
             <span>CONTROLLER</span>
             <span>PROFESSOR</span>
           </div>
+
           {permit.withdraw.map((row, index) => (
             <div className="permit-subject-row" key={`withdraw-${index}`}>
               <strong>{row.course || "—"}</strong>
               <strong>{row.title || "—"}</strong>
               <strong>{row.units || "—"}</strong>
+
               <PermitSignature
                 label="Signature over Printed Name"
                 value={permit.signatures[`Withdraw Controller ${index + 1}`]}
               />
+
               <PermitSignature
                 label="Signature over Printed Name"
                 value={permit.signatures[`Withdraw Professor ${index + 1}`]}
               />
             </div>
           ))}
+
           <p className="permit-note">
             Note: WITHDRAW FROM ALL SUBJECTS. Attach letter stating reason/s and
             file leave of absence (Form 11) if planning to enroll in the
@@ -322,10 +480,13 @@ export function OfficialPermitPreview({
           </p>
         </div>
       </div>
+
       <div className="permit-part subject-part">
         <b>PART 5</b>
+
         <div>
           <h4>ADD the following subject/s:</h4>
+
           <div className="permit-subject-head add-head">
             <span>NO.</span>
             <span>COURSE NO. & SEC.</span>
@@ -333,24 +494,30 @@ export function OfficialPermitPreview({
             <span>UNITS</span>
             <span>CONTROLLER</span>
           </div>
+
           {permit.add.map((row, index) => (
             <div className="permit-subject-row add-row" key={`add-${index}`}>
               <strong>{index + 1}</strong>
               <strong>{row.course || "—"}</strong>
               <strong>{row.title || "—"}</strong>
               <strong>{row.units || "—"}</strong>
+
               <PermitSignature
                 label="Signature over Printed Name"
                 value={permit.signatures[`Add Controller ${index + 1}`]}
               />
             </div>
           ))}
+
           <h5>APPROVAL of Instructor/s for closed subject/s:</h5>
+
           <div className="closed-approvals">
             {permit.add.map((row, index) => (
               <PermitSignature
                 key={`closed-${index}`}
-                label={`Subject ${index + 1}${row.closed ? " · Closed" : " · Not applicable"}`}
+                label={`Subject ${index + 1}${
+                  row.closed ? " · Closed" : " · Not applicable"
+                }`}
                 value={
                   row.closed
                     ? permit.signatures[`Closed Instructor ${index + 1}`]
@@ -361,56 +528,72 @@ export function OfficialPermitPreview({
           </div>
         </div>
       </div>
+
       <div className="permit-part">
         <b>PART 6</b>
+
         <div className="load-totals">
           <strong>
             TOTAL LOAD before Revision <u>{permit.loadBeforeUnits}</u> units;{" "}
             <u>{permit.loadBeforeHours}</u> hours/week
           </strong>
+
           <strong>
             TOTAL LOAD after Revision <u>{permit.loadAfterUnits}</u> units;{" "}
             <u>{permit.loadAfterHours}</u> hours/week
           </strong>
         </div>
       </div>
+
       <div className="permit-part">
         <b>PART 7</b>
+
         <div className="permit-reasons">
           <strong>REASON/S for Load Revision</strong>
+
           <p>
             {permit.conflict ? "☒" : "☐"} Conflict of Schedule &nbsp;&nbsp;{" "}
             {permit.dissolved ? "☒" : "☐"} Subject/s Dissolved &nbsp;&nbsp;
             Other reason/s: <u>{permit.otherReason || "—"}</u>
           </p>
+
           <PermitSignature
             label="Student's Signature over Printed Name"
             value={permit.studentSignature}
           />
         </div>
       </div>
+
       <div className="permit-part">
         <b>PART 8</b>
+
         <div className="permit-approval">
           <strong>APPROVAL:</strong>
+
           {["Adviser", "Chairperson", "Dean", "Registrar"].map((role) => (
             <div className="approval-line" key={role}>
               <b>{role}</b>
+
               <PermitSignature
                 label="Signature over Printed Name"
                 value={permit.signatures[role]}
               />
+
               <span>Date: ____________</span>
+
               {role === "Adviser" && <span>Assessment Php ____________</span>}
+
               {role === "Chairperson" && <span>O.R. No. ____________</span>}
             </div>
           ))}
         </div>
       </div>
+
       <p className="copies-note">
         Accomplish in 3 copies – for the Registrar, the Department and the
         Student.
       </p>
+
       <div className="official-footer">
         <span>A. Bonifacio Avenue, Tibanga, 9200 Iligan City</span>
         <span>Website: www.msuiit.edu.ph</span>
@@ -430,32 +613,40 @@ export function OfficialReviewPage({
   back: () => void;
 }) {
   const permit = request.permit || defaultPermit;
+
   const signatureSlots = [
     ...permit.withdraw.flatMap((_, i) => [
       `Withdraw Controller ${i + 1}`,
       `Withdraw Professor ${i + 1}`,
     ]),
+
     ...permit.add.flatMap((row, i) => [
       `Add Controller ${i + 1}`,
       ...(row.closed ? [`Closed Instructor ${i + 1}`] : []),
     ]),
+
     "Adviser",
     "Chairperson",
     "Dean",
     "Registrar",
   ];
+
   const [slot, setSlot] = useState(
     signatureSlots.find((name) => !permit.signatures[name]) || "Chairperson",
   );
+
   const [dialog, setDialog] = useState<"approve" | "reject" | "return" | null>(
     null,
   );
+
   const [comment, setComment] = useState("");
+
   return (
     <>
       <button className="back-link" onClick={back}>
         ← Back to approval queue
       </button>
+
       <div className="review-top">
         <div>
           <span>{request.id} · FM-MSU-IIT-RGTR-008</span>
@@ -464,45 +655,59 @@ export function OfficialReviewPage({
             Submitted by {request.student} · {request.date}
           </p>
         </div>
+
         <StatusBadge status={request.status} />
       </div>
+
       <div className="review-grid">
         <section className="document-preview official-preview">
           <div className="preview-bar">
             <span>Official template preview · Read-only</span>
+
             <div>
               <b>Fit to page</b>
+
               <button>
                 <Icon name="download" size={16} />
               </button>
             </div>
           </div>
+
           <OfficialPermitPreview permit={permit} />
         </section>
+
         <aside className="review-panel">
           <div className="review-tabs">
             <button className="active">Signatures</button>
             <button>History</button>
           </div>
+
           <div className="review-section">
             <h3>Submitted information</h3>
+
             <Info label="Student ID" value={permit.studentId} />
+
             <Info
               label="Academic term"
               value={`${permit.term}, SY ${permit.schoolYear}`}
             />
+
             <Info label="Course and year" value={permit.courseYear} />
+
             <Button variant="ghost" icon="mail">
               Contact student
             </Button>
           </div>
+
           <div className="review-section signature-routing">
             <h3>Designated signature field</h3>
+
             <p>
               Select the field this authorized action applies to. The
               university-configured routing determines which fields are
               available.
             </p>
+
             <select value={slot} onChange={(e) => setSlot(e.target.value)}>
               {signatureSlots.map((name) => (
                 <option key={name} value={name}>
@@ -510,11 +715,13 @@ export function OfficialReviewPage({
                 </option>
               ))}
             </select>
+
             <div className="slot-status">
               <Icon
                 name={permit.signatures[slot] ? "check" : "clock"}
                 size={15}
               />
+
               <span>
                 {permit.signatures[slot]
                   ? `Signed by ${permit.signatures[slot]}`
@@ -522,8 +729,10 @@ export function OfficialReviewPage({
               </span>
             </div>
           </div>
+
           <div className="review-section">
             <h3>Signature coverage</h3>
+
             <div className="coverage-list">
               {signatureSlots.map((name) => (
                 <div key={name}>
@@ -531,18 +740,23 @@ export function OfficialReviewPage({
                     name={permit.signatures[name] ? "check" : "clock"}
                     size={13}
                   />
+
                   <span>{name}</span>
+
                   <b>{permit.signatures[name] ? "Signed" : "Pending"}</b>
                 </div>
               ))}
             </div>
           </div>
+
           <div className="action-box">
             <span className="eyebrow">Your decision</span>
+
             <p>
               Approval places your saved prototype e-signature in the selected
               designated field. No fixed approval order is assumed.
             </p>
+
             <Button
               variant="success"
               icon="check"
@@ -550,10 +764,12 @@ export function OfficialReviewPage({
             >
               Approve and sign field
             </Button>
+
             <div>
               <Button variant="secondary" onClick={() => setDialog("return")}>
                 Return for revision
               </Button>
+
               <Button variant="danger" onClick={() => setDialog("reject")}>
                 Reject
               </Button>
@@ -561,6 +777,7 @@ export function OfficialReviewPage({
           </div>
         </aside>
       </div>
+
       {dialog && (
         <Modal
           title={
@@ -583,11 +800,13 @@ export function OfficialReviewPage({
               }
             />
           </div>
+
           <p>
             {dialog === "approve"
               ? `Your saved e-signature will be simulated in the designated “${slot}” field. This does not assume or configure the university's approval order.`
               : "Provide a clear reason. The student will receive this message with the status update."}
           </p>
+
           {dialog !== "approve" && (
             <textarea
               rows={4}
@@ -600,10 +819,12 @@ export function OfficialReviewPage({
               }
             />
           )}
+
           <div className="modal-actions">
             <Button variant="secondary" onClick={() => setDialog(null)}>
               Cancel
             </Button>
+
             <Button
               variant={
                 dialog === "approve"

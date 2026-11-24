@@ -1,6 +1,6 @@
 # File Tree: CloudDocumentApprovalSystem
 
-**Generated:** 11/14/2026, 11:59:58 AM
+**Generated:** 11/22/2026, 12:57:41 PM
 **Root Path:** `c:\Users\HP\Desktop\CloudDocumentApprovalSystem`
 
 ```
@@ -20,15 +20,24 @@
 │   │   ├── 📁 config
 │   │   │   └── 📄 database.ts
 │   │   ├── 📁 controllers
-│   │   │   └── 📄 auth.controller.ts
+│   │   │   ├── 📄 auth.controller.ts
+│   │   │   ├── 📄 dashboard.controller.ts
+│   │   │   ├── 📄 notification.controller.ts
+│   │   │   └── 📄 request.controller.ts
 │   │   ├── 📁 middleware
 │   │   │   └── 📄 auth.middleware.ts
 │   │   ├── 📁 routes
-│   │   │   └── 📄 auth.routes.ts
+│   │   │   ├── 📄 auth.routes.ts
+│   │   │   ├── 📄 dashboard.routes.ts
+│   │   │   ├── 📄 notification.routes.ts
+│   │   │   └── 📄 request.routes.ts
 │   │   ├── 📁 scripts
 │   │   │   └── 📄 create-admin.ts
 │   │   ├── 📁 services
-│   │   │   └── 📄 auth.service.ts
+│   │   │   ├── 📄 auth.service.ts
+│   │   │   ├── 📄 dashboard.service.ts
+│   │   │   ├── 📄 notification.service.ts
+│   │   │   └── 📄 request.service.ts
 │   │   ├── 📁 types
 │   │   │   ├── 📄 auth.ts
 │   │   │   └── 📄 express-session.d.ts
@@ -39,9 +48,15 @@
 │   └── ⚙️ tsconfig.json
 ├── 📁 database
 │   ├── 📁 backups
-│   │   └── 📄 cloud_document_approval_2026-11-13.backup
+│   │   ├── 📄 cloud_document_approval_before_workflow.backup
+│   │   ├── 📄 cloud_document_approval_v2.backup
+│   │   └── 📄 cloud_document_approval_v3.backup
 │   ├── 📁 migrations
-│   └── 📁 seeds
+│   │   ├── 📄 002_update_shifter_and_leave_details.sql
+│   │   └── 📄 003_create_notifications.sql
+│   ├── 📁 seeds
+│   │   └── 📄 demo_profiles.sql
+│   └── 📄 schema-inspection.sql
 ├── 📁 public
 │   └── 🖼️ favicon.svg
 ├── 📁 src
@@ -54,7 +69,10 @@
 │   ├── 📁 data
 │   │   └── 📄 initialData.ts
 │   ├── 📁 lib
-│   │   └── 📄 auth.ts
+│   │   ├── 📄 auth.ts
+│   │   ├── 📄 dashboard.ts
+│   │   ├── 📄 notifications.ts
+│   │   └── 📄 requests.ts
 │   ├── 📁 pages
 │   │   ├── 📁 account
 │   │   │   └── 📄 AccountPages.tsx
@@ -89,6 +107,7 @@
 ├── 📝 AGENTS.md
 ├── 📝 CLAUDE.md
 ├── 📝 DevTree.md
+├── 📝 implementationRoadMap.md
 ├── 🌐 index.html
 ├── ⚙️ package-lock.json
 ├── ⚙️ package.json

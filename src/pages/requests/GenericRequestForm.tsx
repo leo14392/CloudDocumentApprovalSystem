@@ -5,6 +5,11 @@ import type {
   LeaveOfAbsenceSubmission,
 } from "../../lib/auth";
 
+import type {
+  ShifterApplicationDetails,
+  LeaveOfAbsenceDetails,
+} from "../../lib/requests";
+
 import { Button, Field, Icon, Modal } from "../../components/ui";
 
 type GenericRequestSubmission =
@@ -15,15 +20,40 @@ export function GenericRequestForm({
   type,
   cancel,
   submit,
+  initialData,
+  isResubmission = false,
 }: {
   type: string;
   cancel: () => void;
   submit: (data?: GenericRequestSubmission) => void;
+  initialData?: ShifterApplicationDetails | LeaveOfAbsenceDetails;
+  isResubmission?: boolean;
 }) {
-  const [reason, setReason] = useState("");
-  const [intendedProgram, setIntendedProgram] = useState("");
-  const [currentAcademicYear, setCurrentAcademicYear] = useState("");
-  const [semester, setSemester] = useState("1st Semester");
+  const [reason, setReason] = useState(
+    initialData
+      ? "reason_for_shifting" in initialData
+        ? initialData.reason_for_shifting
+        : initialData.reason_of_absence
+      : "",
+  );
+
+  const [intendedProgram, setIntendedProgram] = useState(
+    initialData && "intended_program" in initialData
+      ? initialData.intended_program
+      : "",
+  );
+
+  const [currentAcademicYear, setCurrentAcademicYear] = useState(
+    initialData && "current_academic_year" in initialData
+      ? initialData.current_academic_year
+      : "",
+  );
+
+  const [semester, setSemester] = useState(
+    initialData && "semester" in initialData
+      ? initialData.semester
+      : "1st Semester",
+  );
 
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState(false);
@@ -209,7 +239,12 @@ export function GenericRequestForm({
       </form>
 
       {confirm && (
-        <Modal title="Submit this request?" close={() => setConfirm(false)}>
+        <Modal
+          title={
+            isResubmission ? "Resubmit this request?" : "Submit this request?"
+          }
+          close={() => setConfirm(false)}
+        >
           <div className="confirm-icon">
             <Icon name="file" />
           </div>
@@ -249,7 +284,9 @@ export function GenericRequestForm({
               Go back
             </Button>
 
-            <Button onClick={confirmSubmission}>Confirm submission</Button>
+            <Button onClick={confirmSubmission}>
+              {isResubmission ? "Confirm resubmission" : "Confirm submission"}
+            </Button>
           </div>
         </Modal>
       )}

@@ -8,7 +8,12 @@ import {
   createLeaveOfAbsenceRequest,
   getRequests,
   getRequestDetails,
-  approveRequest
+  approveRequest,
+  rejectRequest,
+  returnRequestForRevision,
+  resubmitLoadRevisionRequest,
+  resubmitShifterApplicationRequest,
+  resubmitLeaveOfAbsenceRequest
 } from "../services/request.service.js";
 
 const subjectSchema = z.object({
@@ -164,6 +169,7 @@ export async function createLoadRevision(
     });
   }
 }
+
 
 // Submit Shifter's Application.
 export async function createShifterApplication(
@@ -490,6 +496,321 @@ export async function approveRequestController(
     return res.status(500).json({
       success: false,
       message: "Unable to approve this request."
+    });
+  }
+}
+
+
+const reviewRemarksSchema = z.object({
+  remarks: z.string().trim().min(1, "Remarks are required.").max(5000)
+});
+
+export async function rejectRequestController(
+  req: Request,
+  res: Response
+) {
+  const authenticatedUser = req.session.user;
+
+  if (!authenticatedUser) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required."
+    });
+  }
+
+  const referenceNumber = z.string()
+    .trim()
+    .min(1)
+    .max(50)
+    .safeParse(req.params.referenceNumber);
+
+  if (!referenceNumber.success) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid request reference number is required."
+    });
+  }
+
+  const validation = reviewRemarksSchema.safeParse(req.body);
+
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      message: validation.error.issues[0]?.message ?? "Invalid remarks."
+    });
+  }
+
+  try {
+    const result = await rejectRequest(
+      referenceNumber.data,
+      authenticatedUser.id,
+      validation.data.remarks
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      request: result.request
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Request not found or has no active approval.") {
+        return res.status(404).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      if (
+        error.message === "You are not assigned to review this request." ||
+        error.message === "This request cannot be processed in its current state."
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
+
+    console.error("Request rejection failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to reject this request."
+    });
+  }
+}
+
+export async function returnRequestController(
+  req: Request,
+  res: Response
+) {
+  const authenticatedUser = req.session.user;
+
+  if (!authenticatedUser) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required."
+    });
+  }
+
+  const referenceNumber = z.string()
+    .trim()
+    .min(1)
+    .max(50)
+    .safeParse(req.params.referenceNumber);
+
+  if (!referenceNumber.success) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid request reference number is required."
+    });
+  }
+
+  const validation = reviewRemarksSchema.safeParse(req.body);
+
+  if (!validation.success) {
+    return res.status(400).json({
+      success: false,
+      message: validation.error.issues[0]?.message ?? "Invalid remarks."
+    });
+  }
+
+  try {
+    const result = await returnRequestForRevision(
+      referenceNumber.data,
+      authenticatedUser.id,
+      validation.data.remarks
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      request: result.request
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Request not found or has no active approval.") {
+        return res.status(404).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      if (
+        error.message === "You are not assigned to review this request." ||
+        error.message === "This request cannot be processed in its current state."
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
+
+    console.error("Returning request for revision failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to return this request for revision."
+    });
+  }
+}
+
+export async function resubmitRequestController(
+  req: Request,
+  res: Response
+) {
+  const authenticatedUser = req.session.user;
+
+  if (!authenticatedUser) {
+    return res.status(401).json({
+      success: false,
+      message: "Authentication required."
+    });
+  }
+
+  if (!authenticatedUser.roles.includes("STUDENT")) {
+    return res.status(403).json({
+      success: false,
+      message: "Only students can resubmit document requests."
+    });
+  }
+
+  const referenceNumber = z.string()
+    .trim()
+    .min(1)
+    .max(50)
+    .safeParse(req.params.referenceNumber);
+
+  if (!referenceNumber.success) {
+    return res.status(400).json({
+      success: false,
+      message: "A valid request reference number is required."
+    });
+  }
+
+  try {
+    // Retrieve the original request to identify its document type.
+    const originalRequest = await getRequestDetails(
+      referenceNumber.data,
+      authenticatedUser.id,
+      true
+    );
+
+    if (!originalRequest) {
+      return res.status(404).json({
+        success: false,
+        message: "Request not found."
+      });
+    }
+
+    let result;
+
+    switch (originalRequest.documentCode) {
+      case "LOAD_REVISION": {
+        const validation = loadRevisionSchema.safeParse(req.body);
+
+        if (!validation.success) {
+          return res.status(400).json({
+            success: false,
+            message: "Please check the revised permit information.",
+            errors: validation.error.flatten()
+          });
+        }
+
+        result = await resubmitLoadRevisionRequest(
+          referenceNumber.data,
+          authenticatedUser.id,
+          validation.data
+        );
+
+        break;
+      }
+
+      case "SHIFT_APPLICATION": {
+        const validation = shifterApplicationSchema.safeParse(req.body);
+
+        if (!validation.success) {
+          return res.status(400).json({
+            success: false,
+            message: "Please check the revised Shifter's Application information.",
+            errors: validation.error.flatten()
+          });
+        }
+
+        result = await resubmitShifterApplicationRequest(
+          referenceNumber.data,
+          authenticatedUser.id,
+          validation.data
+        );
+
+        break;
+      }
+
+      case "LEAVE_ABSENCE": {
+        const validation = leaveOfAbsenceSchema.safeParse(req.body);
+
+        if (!validation.success) {
+          return res.status(400).json({
+            success: false,
+            message: "Please check the revised Leave of Absence information.",
+            errors: validation.error.flatten()
+          });
+        }
+
+        result = await resubmitLeaveOfAbsenceRequest(
+          referenceNumber.data,
+          authenticatedUser.id,
+          validation.data
+        );
+
+        break;
+      }
+
+      default:
+        return res.status(400).json({
+          success: false,
+          message: "This document type does not support resubmission."
+        });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      request: {
+        id: result.id,
+        referenceNumber: result.referenceNumber,
+        status: result.status,
+        cycleNumber: result.cycleNumber,
+        student: result.student
+      }
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "Request not found.") {
+        return res.status(404).json({
+          success: false,
+          message: error.message
+        });
+      }
+
+      if (
+        error.message ===
+        "This request is not currently eligible for resubmission."
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: error.message
+        });
+      }
+    }
+
+    console.error("Request resubmission failed:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to resubmit this request. Please try again."
     });
   }
 }

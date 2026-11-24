@@ -795,7 +795,10 @@ export async function createLeaveOfAbsenceRequest(
   }
 }
 
-export async function getRequests(userId: string, isStudent: boolean) {
+export async function getRequests(
+  userId: string,
+  isStudent: boolean
+) {
   const result = await pool.query(
     `
     SELECT
@@ -818,8 +821,22 @@ export async function getRequests(userId: string, isStudent: boolean) {
     WHERE dr.submitted_at IS NOT NULL
       AND dr.status <> 'Draft'
       AND (
-        $2::boolean = FALSE
-        OR dr.student_user_id = $1
+        (
+          $2::boolean = TRUE
+          AND dr.student_user_id = $1
+        )
+        OR
+        (
+          $2::boolean = FALSE
+          AND EXISTS (
+            SELECT 1
+            FROM public.document_approval_instances dai
+            JOIN public.document_approvals da
+              ON da.instance_id = dai.instance_id
+            WHERE dai.request_id = dr.request_id
+              AND da.assigned_approver_user_id = $1
+          )
+        )
       )
     ORDER BY dr.submitted_at DESC
     `,
@@ -877,8 +894,19 @@ export async function getRequestDetails(
       ON sp.user_id = u.user_id
     WHERE dr.reference_number = $1
       AND (
-        $3::boolean = FALSE
-        OR dr.student_user_id = $2
+        ($3::boolean = TRUE AND dr.student_user_id = $2)
+        OR
+        (
+          $3::boolean = FALSE
+          AND EXISTS (
+            SELECT 1
+            FROM public.document_approval_instances dai
+            JOIN public.document_approvals da
+              ON da.instance_id = dai.instance_id
+            WHERE dai.request_id = dr.request_id
+              AND da.assigned_approver_user_id = $2
+          )
+        )
       )
     `,
     [referenceNumber, userId, isStudent]
@@ -889,6 +917,63 @@ export async function getRequestDetails(
   }
 
   const request = requestResult.rows[0];
+
+    // Retrieve the approval history for this request.
+  const historyResult = await pool.query(
+    `
+    SELECT
+      h.history_id,
+      h.action,
+      h.actor_user_id,
+      h.remarks,
+      h.created_at,
+
+      CASE
+        WHEN h.action = 'Assigned' THEN NULL
+        ELSE NULLIF(
+          CONCAT_WS(
+            ' ',
+            actor.given_name,
+            actor.middle_name,
+            actor.family_name
+          ),
+          ''
+        )
+      END AS actor_name,
+
+      aws.step_name AS actor_role
+
+    FROM public.document_approval_history h
+
+    JOIN public.document_approval_instances dai
+      ON dai.instance_id = h.instance_id
+
+    LEFT JOIN public.app_users actor
+      ON actor.user_id = h.actor_user_id
+
+    LEFT JOIN public.approval_workflow_steps aws
+      ON aws.workflow_step_id =
+        CASE
+          WHEN h.action = 'Assigned' THEN h.to_step_id
+          ELSE h.from_step_id
+        END
+
+    WHERE dai.request_id = $1
+
+    ORDER BY h.created_at ASC, h.history_id ASC
+    `,
+    [request.request_id]
+  );
+
+  const approvalHistory = historyResult.rows.map((row) => ({
+    historyId: row.history_id.toString(),
+    action: row.action,
+    actorUserId: row.actor_user_id?.toString() ?? null,
+    actorName: row.actor_name,
+    actorRole: row.actor_role,
+    remarks: row.remarks,
+    createdAt: row.created_at
+  }));
 
   let details: Record<string, unknown> | null = null;
 
@@ -1013,7 +1098,8 @@ export async function getRequestDetails(
       yearLevel: request.year_level
     },
 
-    details
+    details,
+    approvalHistory
   };
 }
 
@@ -1484,6 +1570,1225 @@ export async function approveRequest(
         status: "Pending",
         currentStage: nextStep.step_name
       }
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+
+type ReviewDecision = "Rejected" | "Returned for Revision";
+
+async function processReviewDecision(
+  referenceNumber: string,
+  approverUserId: string,
+  decision: ReviewDecision,
+  remarks: string
+) {
+  const cleanRemarks = remarks.trim();
+
+  if (!cleanRemarks) {
+    throw new Error("Remarks are required for this action.");
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const currentResult = await client.query(
+      `
+      SELECT
+        dr.request_id,
+        dr.reference_number,
+        dr.status AS request_status,
+        dr.student_user_id,
+
+        dai.instance_id,
+        dai.current_step_id,
+        dai.cycle_number,
+        dai.status AS instance_status,
+
+        da.approval_id,
+        da.assigned_approver_user_id,
+        da.status AS approval_status,
+
+        aws.step_name
+
+      FROM public.document_requests dr
+
+      JOIN public.document_approval_instances dai
+        ON dai.request_id = dr.request_id
+
+      JOIN public.document_approvals da
+        ON da.instance_id = dai.instance_id
+       AND da.workflow_step_id = dai.current_step_id
+       AND da.cycle_number = dai.cycle_number
+
+      JOIN public.approval_workflow_steps aws
+        ON aws.workflow_step_id = dai.current_step_id
+
+      WHERE dr.reference_number = $1
+
+      FOR UPDATE OF dr, dai, da
+      `,
+      [referenceNumber]
+    );
+
+    if (currentResult.rowCount !== 1) {
+      throw new Error("Request not found or has no active approval.");
+    }
+
+    const current = currentResult.rows[0];
+
+    if (
+      current.assigned_approver_user_id.toString() !== approverUserId
+    ) {
+      throw new Error(
+        "You are not assigned to review this request."
+      );
+    }
+
+    if (
+      current.approval_status !== "Pending" ||
+      current.instance_status !== "In Progress" ||
+      current.request_status !== "Pending"
+    ) {
+      throw new Error(
+        "This request cannot be processed in its current state."
+      );
+    }
+
+    const activeApproverResult = await client.query(
+      `
+      SELECT 1
+      FROM public.app_users
+      WHERE user_id = $1
+        AND is_active = TRUE
+      `,
+      [approverUserId]
+    );
+
+    if (activeApproverResult.rowCount !== 1) {
+      throw new Error("Your approver account is inactive.");
+    }
+
+    const approvalStatus =
+      decision === "Rejected"
+        ? "Rejected"
+        : "Returned for Revision";
+
+    const instanceStatus =
+      decision === "Rejected"
+        ? "Rejected"
+        : "Revision Required";
+
+    await client.query(
+      `
+      UPDATE public.document_approvals
+      SET
+        status = $1,
+        remarks = $2,
+        acted_at = NOW()
+      WHERE approval_id = $3
+        AND status = 'Pending'
+      `,
+      [
+        approvalStatus,
+        cleanRemarks,
+        current.approval_id
+      ]
+    );
+
+    await client.query(
+      `
+      UPDATE public.document_approval_instances
+      SET
+        current_step_id = NULL,
+        status = $1,
+        completed_at = NOW()
+      WHERE instance_id = $2
+      `,
+      [instanceStatus, current.instance_id]
+    );
+
+    await client.query(
+      `
+      UPDATE public.document_requests
+      SET
+        status = $1,
+        completed_at = NOW()
+      WHERE request_id = $2
+      `,
+      [decision, current.request_id]
+    );
+
+    await client.query(
+      `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, $2, $3, $4, $5, NULL, $6, $7)
+      `,
+      [
+        current.instance_id,
+        current.approval_id,
+        approverUserId,
+        decision,
+        current.current_step_id,
+        current.cycle_number,
+        cleanRemarks
+      ]
+    );
+
+    const isRejected = decision === "Rejected";
+
+    await client.query(
+      `
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES ($1, $2, $3, $4, $5)
+      `,
+      [
+        current.student_user_id,
+        current.request_id,
+        isRejected ? "request_rejected" : "revision_required",
+        isRejected
+          ? "Document request rejected"
+          : "Document returned for revision",
+        isRejected
+          ? `Your request (${current.reference_number}) was rejected. Remarks: ${cleanRemarks}`
+          : `Your request (${current.reference_number}) was returned for revision. Please review the remarks and resubmit it. Remarks: ${cleanRemarks}`
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      message: isRejected
+        ? "Request rejected successfully."
+        : "Request returned to the student for revision.",
+      request: {
+        referenceNumber: current.reference_number,
+        status: decision,
+        currentStage: null
+      }
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function rejectRequest(
+  referenceNumber: string,
+  approverUserId: string,
+  remarks: string
+) {
+  return processReviewDecision(
+    referenceNumber,
+    approverUserId,
+    "Rejected",
+    remarks
+  );
+}
+
+export async function returnRequestForRevision(
+  referenceNumber: string,
+  approverUserId: string,
+  remarks: string
+) {
+  return processReviewDecision(
+    referenceNumber,
+    approverUserId,
+    "Returned for Revision",
+    remarks
+  );
+}
+
+export async function resubmitLoadRevisionRequest(
+  referenceNumber: string,
+  studentUserId: string,
+  data: LoadRevisionSubmission
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Lock and retrieve the student's original request and approval instance.
+    const requestResult = await client.query(
+      `
+      SELECT
+        dr.request_id,
+        dr.reference_number,
+        dr.status AS request_status,
+        dai.instance_id,
+        dai.workflow_id,
+        dai.current_step_id,
+        dai.cycle_number,
+        dai.status AS instance_status,
+        sp.adviser_user_id,
+        u.given_name,
+        u.middle_name,
+        u.family_name
+      FROM public.document_requests dr
+      JOIN public.document_types dt
+        ON dt.document_type_id = dr.document_type_id
+      JOIN public.document_approval_instances dai
+        ON dai.request_id = dr.request_id
+      JOIN public.student_profiles sp
+        ON sp.user_id = dr.student_user_id
+      JOIN public.app_users u
+        ON u.user_id = dr.student_user_id
+      WHERE dr.reference_number = $1
+        AND dr.student_user_id = $2
+        AND dt.document_code = 'LOAD_REVISION'
+        AND u.is_active = TRUE
+      FOR UPDATE OF dr, dai
+      `,
+      [referenceNumber, studentUserId]
+    );
+
+    if (requestResult.rowCount !== 1) {
+      throw new Error("Request not found.");
+    }
+
+    const request = requestResult.rows[0];
+
+    // Only requests returned for revision may be resubmitted.
+    if (
+      request.request_status !== "Returned for Revision" ||
+      request.instance_status !== "Revision Required"
+    ) {
+      throw new Error(
+        "This request is not currently eligible for resubmission."
+      );
+    }
+
+    if (!request.adviser_user_id) {
+      throw new Error(
+        "The student's assigned Academic Adviser could not be found."
+      );
+    }
+
+    // Resolve the first Adviser step using the existing workflow.
+    // This follows the same role and assignment pattern as
+    // createInitialApprovalWorkflow().
+    const assignmentResult = await client.query(
+      `
+      SELECT
+        aws.workflow_step_id,
+        sp.adviser_user_id,
+        adviser.email AS adviser_email
+      FROM public.student_profiles sp
+      JOIN public.app_users adviser
+        ON adviser.user_id = sp.adviser_user_id
+       AND adviser.is_active = TRUE
+      JOIN public.user_roles ur
+        ON ur.user_id = adviser.user_id
+      JOIN public.roles assigned_role
+        ON assigned_role.role_id = ur.role_id
+       AND assigned_role.role_code = 'ADVISER'
+      JOIN public.approval_workflow_steps aws
+        ON aws.workflow_id = $2
+       AND aws.step_order = 1
+       AND aws.is_active = TRUE
+      JOIN public.roles step_role
+        ON step_role.role_id = aws.role_id
+       AND step_role.role_code = 'ADVISER'
+      WHERE sp.user_id = $1
+      FOR SHARE OF sp, adviser
+      `,
+      [studentUserId, request.workflow_id]
+    );
+
+    if (assignmentResult.rowCount !== 1) {
+      throw new Error(
+        "The initial Academic Adviser assignment could not be resolved. Verify the student's assigned adviser and the active college workflow."
+      );
+    }
+
+    const assignment = assignmentResult.rows[0];
+
+    const studentName = [
+      request.given_name,
+      request.middle_name,
+      request.family_name
+    ].filter(Boolean).join(" ");
+
+    const nextCycle = Number(request.cycle_number) + 1;
+
+    // Update the original permit details.
+    const detailsResult = await client.query(
+      `
+      UPDATE public.load_revision_details
+      SET
+        academic_term = $2,
+        school_year = $3,
+        permit_date = $4,
+        load_before_units = $5,
+        load_before_hours = $6,
+        load_after_units = $7,
+        load_after_hours = $8,
+        conflict_of_schedule = $9,
+        subjects_dissolved = $10,
+        other_reason = $11,
+        student_signature_name = $12
+      WHERE request_id = $1
+      `,
+      [
+        request.request_id,
+        data.term,
+        data.schoolYear,
+        data.permitDate,
+        data.loadBeforeUnits,
+        data.loadBeforeHours,
+        data.loadAfterUnits,
+        data.loadAfterHours,
+        data.conflict,
+        data.dissolved,
+        data.otherReason.trim() || null,
+        studentName
+      ]
+    );
+
+    if (detailsResult.rowCount !== 1) {
+      throw new Error(
+        "The original Academic Load Revision Permit details could not be found."
+      );
+    }
+
+    // Replace the original subject entries with the revised entries.
+    await client.query(
+      `
+      DELETE FROM public.load_revision_subjects
+      WHERE request_id = $1
+      `,
+      [request.request_id]
+    );
+
+    // Save withdrawn subjects.
+    for (const subject of data.withdraw) {
+      await client.query(
+        `
+        INSERT INTO public.load_revision_subjects (
+          request_id,
+          revision_action,
+          course_number_section,
+          course_title,
+          units,
+          is_closed_subject
+        )
+        VALUES ($1, 'WITHDRAW', $2, $3, $4, FALSE)
+        `,
+        [
+          request.request_id,
+          subject.course.trim(),
+          subject.title.trim(),
+          subject.units
+        ]
+      );
+    }
+
+    // Save added subjects.
+    for (const subject of data.add) {
+      await client.query(
+        `
+        INSERT INTO public.load_revision_subjects (
+          request_id,
+          revision_action,
+          course_number_section,
+          course_title,
+          units,
+          is_closed_subject
+        )
+        VALUES ($1, 'ADD', $2, $3, $4, $5)
+        `,
+        [
+          request.request_id,
+          subject.course.trim(),
+          subject.title.trim(),
+          subject.units,
+          subject.closed ?? false
+        ]
+      );
+    }
+
+    // Create a new Pending approval for the Adviser in this cycle.
+    const approvalResult = await client.query(
+      `
+      INSERT INTO public.document_approvals (
+        instance_id,
+        workflow_step_id,
+        cycle_number,
+        assigned_approver_user_id,
+        status
+      )
+      VALUES ($1, $2, $3, $4, 'Pending')
+      RETURNING approval_id
+      `,
+      [
+        request.instance_id,
+        assignment.workflow_step_id,
+        nextCycle,
+        assignment.adviser_user_id
+      ]
+    );
+
+    const approvalId = approvalResult.rows[0].approval_id;
+
+    // Reopen the existing approval instance.
+    await client.query(
+      `
+      UPDATE public.document_approval_instances
+      SET
+        current_step_id = $1,
+        cycle_number = $2,
+        status = 'In Progress',
+        started_at = NOW(),
+        completed_at = NULL
+      WHERE instance_id = $3
+      `,
+      [
+        assignment.workflow_step_id,
+        nextCycle,
+        request.instance_id
+      ]
+    );
+
+    // Return the original request to Pending.
+    await client.query(
+      `
+      UPDATE public.document_requests
+      SET
+        status = 'Pending',
+        submitted_at = NOW(),
+        completed_at = NULL
+      WHERE request_id = $1
+      `,
+      [request.request_id]
+    );
+
+    // Record the student's resubmission.
+    await client.query(
+      `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, NULL, $2, 'Resubmitted', NULL, $3, $4, $5)
+      `,
+      [
+        request.instance_id,
+        studentUserId,
+        assignment.workflow_step_id,
+        nextCycle,
+        "Student resubmitted the revised Academic Load Revision Permit."
+      ]
+    );
+
+    // Record the new Adviser assignment.
+    await client.query(
+      `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, $2, NULL, 'Assigned', NULL, $3, $4, $5)
+      `,
+      [
+        request.instance_id,
+        approvalId,
+        assignment.workflow_step_id,
+        nextCycle,
+        `Assigned to the student's Academic Adviser (${assignment.adviser_email}).`
+      ]
+    );
+
+    // Notify the Adviser.
+    await client.query(
+      `
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES ($1, $2, 'new_request', $3, $4)
+      `,
+      [
+        assignment.adviser_user_id,
+        request.request_id,
+        "Revised document awaiting your review",
+        `${studentName} resubmitted Academic Load Revision Permit (${request.reference_number}). It is awaiting your review.`
+      ]
+    );
+
+    // Notify the student.
+    await client.query(
+      `
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES ($1, $2, 'submission_confirmation', $3, $4)
+      `,
+      [
+        studentUserId,
+        request.request_id,
+        "Revised document submitted successfully",
+        `Your revised Academic Load Revision Permit (${request.reference_number}) was submitted successfully and is awaiting review.`
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      id: request.request_id.toString(),
+      referenceNumber: request.reference_number,
+      status: "Pending",
+      cycleNumber: nextCycle,
+      message: "Academic Load Revision Permit resubmitted successfully.",
+      student: studentName
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function resubmitShifterApplicationRequest(
+  referenceNumber: string,
+  studentUserId: string,
+  data: ShifterApplicationSubmission
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Retrieve and lock the original request.
+    const requestResult = await client.query(
+      `
+      SELECT
+        dr.request_id,
+        dr.reference_number,
+        dr.status AS request_status,
+        dai.instance_id,
+        dai.workflow_id,
+        dai.cycle_number,
+        dai.status AS instance_status,
+        sp.adviser_user_id,
+        sp.program AS current_program,
+        u.given_name,
+        u.middle_name,
+        u.family_name
+      FROM public.document_requests dr
+      JOIN public.document_types dt
+        ON dt.document_type_id = dr.document_type_id
+      JOIN public.document_approval_instances dai
+        ON dai.request_id = dr.request_id
+      JOIN public.student_profiles sp
+        ON sp.user_id = dr.student_user_id
+      JOIN public.app_users u
+        ON u.user_id = dr.student_user_id
+      WHERE dr.reference_number = $1
+        AND dr.student_user_id = $2
+        AND dt.document_code = 'SHIFT_APPLICATION'
+        AND u.is_active = TRUE
+      FOR UPDATE OF dr, dai
+      `,
+      [referenceNumber, studentUserId]
+    );
+
+    if (requestResult.rowCount !== 1) {
+      throw new Error("Shifter's Application request not found.");
+    }
+
+    const request = requestResult.rows[0];
+
+    if (
+      request.request_status !== "Returned for Revision" ||
+      request.instance_status !== "Revision Required"
+    ) {
+      throw new Error(
+        "This request is not currently eligible for resubmission."
+      );
+    }
+
+    if (!request.adviser_user_id) {
+      throw new Error(
+        "The student's assigned Academic Adviser could not be found."
+      );
+    }
+
+    const intendedProgram = data.intendedProgram.trim();
+    const reason = data.reason.trim();
+
+    if (!intendedProgram || !reason) {
+      throw new Error(
+        "Intended program and reason for shifting are required."
+      );
+    }
+
+    if (
+      intendedProgram.toLowerCase() ===
+      request.current_program.toLowerCase()
+    ) {
+      throw new Error(
+        "The intended program must be different from the current program."
+      );
+    }
+
+    // Resolve the first Adviser step in the original workflow.
+    const assignmentResult = await client.query(
+      `
+      SELECT
+        aws.workflow_step_id,
+        sp.adviser_user_id,
+        adviser.email AS adviser_email
+      FROM public.student_profiles sp
+      JOIN public.app_users adviser
+        ON adviser.user_id = sp.adviser_user_id
+       AND adviser.is_active = TRUE
+      JOIN public.user_roles ur
+        ON ur.user_id = adviser.user_id
+      JOIN public.roles assigned_role
+        ON assigned_role.role_id = ur.role_id
+       AND assigned_role.role_code = 'ADVISER'
+      JOIN public.approval_workflow_steps aws
+        ON aws.workflow_id = $2
+       AND aws.step_order = 1
+       AND aws.is_active = TRUE
+      JOIN public.roles step_role
+        ON step_role.role_id = aws.role_id
+       AND step_role.role_code = 'ADVISER'
+      WHERE sp.user_id = $1
+      FOR SHARE OF sp, adviser
+      `,
+      [studentUserId, request.workflow_id]
+    );
+
+    if (assignmentResult.rowCount !== 1) {
+      throw new Error(
+        "The initial Academic Adviser assignment could not be resolved."
+      );
+    }
+
+    const assignment = assignmentResult.rows[0];
+
+    const studentName = [
+      request.given_name,
+      request.middle_name,
+      request.family_name
+    ].filter(Boolean).join(" ");
+
+    const nextCycle = Number(request.cycle_number) + 1;
+
+    // Update the original Shifter's Application details.
+    const detailsResult = await client.query(
+      `
+      UPDATE public.shifter_application_details
+      SET
+        intended_program = $2,
+        reason_for_shifting = $3
+      WHERE request_id = $1
+      `,
+      [
+        request.request_id,
+        intendedProgram,
+        reason
+      ]
+    );
+
+    if (detailsResult.rowCount !== 1) {
+      throw new Error(
+        "The original Shifter's Application details could not be found."
+      );
+    }
+
+    // Create a new Pending approval for the Adviser.
+    const approvalResult = await client.query(
+      `
+      INSERT INTO public.document_approvals (
+        instance_id,
+        workflow_step_id,
+        cycle_number,
+        assigned_approver_user_id,
+        status
+      )
+      VALUES ($1, $2, $3, $4, 'Pending')
+      RETURNING approval_id
+      `,
+      [
+        request.instance_id,
+        assignment.workflow_step_id,
+        nextCycle,
+        assignment.adviser_user_id
+      ]
+    );
+
+    const approvalId = approvalResult.rows[0].approval_id;
+
+    // Reopen the existing approval instance.
+    await client.query(
+      `
+      UPDATE public.document_approval_instances
+      SET
+        current_step_id = $1,
+        cycle_number = $2,
+        status = 'In Progress',
+        started_at = NOW(),
+        completed_at = NULL
+      WHERE instance_id = $3
+      `,
+      [
+        assignment.workflow_step_id,
+        nextCycle,
+        request.instance_id
+      ]
+    );
+
+    // Return the original request to Pending.
+    await client.query(
+      `
+      UPDATE public.document_requests
+      SET
+        status = 'Pending',
+        submitted_at = NOW(),
+        completed_at = NULL
+      WHERE request_id = $1
+      `,
+      [request.request_id]
+    );
+
+    // Record the student's resubmission.
+    await client.query(
+      `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, NULL, $2, 'Resubmitted', NULL, $3, $4, $5)
+      `,
+      [
+        request.instance_id,
+        studentUserId,
+        assignment.workflow_step_id,
+        nextCycle,
+        "Student resubmitted the revised Shifter's Application Form."
+      ]
+    );
+
+    // Record the new Adviser assignment.
+    await client.query(
+      `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, $2, NULL, 'Assigned', NULL, $3, $4, $5)
+      `,
+      [
+        request.instance_id,
+        approvalId,
+        assignment.workflow_step_id,
+        nextCycle,
+        `Assigned to the student's Academic Adviser (${assignment.adviser_email}).`
+      ]
+    );
+
+    // Notify the Adviser.
+    await client.query(
+      `
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES ($1, $2, 'new_request', $3, $4)
+      `,
+      [
+        assignment.adviser_user_id,
+        request.request_id,
+        "Revised document awaiting your review",
+        `${studentName} resubmitted Shifter's Application Form (${request.reference_number}). It is awaiting your review.`
+      ]
+    );
+
+    // Notify the student.
+    await client.query(
+      `
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES ($1, $2, 'submission_confirmation', $3, $4)
+      `,
+      [
+        studentUserId,
+        request.request_id,
+        "Revised document submitted successfully",
+        `Your revised Shifter's Application Form (${request.reference_number}) was submitted successfully and is awaiting review.`
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      id: request.request_id.toString(),
+      referenceNumber: request.reference_number,
+      status: "Pending",
+      cycleNumber: nextCycle,
+      message: "Shifter's Application Form resubmitted successfully.",
+      student: studentName
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function resubmitLeaveOfAbsenceRequest(
+  referenceNumber: string,
+  studentUserId: string,
+  data: LeaveOfAbsenceSubmission
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const requestResult = await client.query(
+      `
+      SELECT
+        dr.request_id,
+        dr.reference_number,
+        dr.status AS request_status,
+        dai.instance_id,
+        dai.workflow_id,
+        dai.cycle_number,
+        dai.status AS instance_status,
+        sp.adviser_user_id,
+        u.given_name,
+        u.middle_name,
+        u.family_name
+      FROM public.document_requests dr
+      JOIN public.document_types dt
+        ON dt.document_type_id = dr.document_type_id
+      JOIN public.document_approval_instances dai
+        ON dai.request_id = dr.request_id
+      JOIN public.student_profiles sp
+        ON sp.user_id = dr.student_user_id
+      JOIN public.app_users u
+        ON u.user_id = dr.student_user_id
+      WHERE dr.reference_number = $1
+        AND dr.student_user_id = $2
+        AND dt.document_code = 'LEAVE_ABSENCE'
+        AND u.is_active = TRUE
+      FOR UPDATE OF dr, dai
+      `,
+      [referenceNumber, studentUserId]
+    );
+
+    if (requestResult.rowCount !== 1) {
+      throw new Error("Leave of Absence request not found.");
+    }
+
+    const request = requestResult.rows[0];
+
+    if (
+      request.request_status !== "Returned for Revision" ||
+      request.instance_status !== "Revision Required"
+    ) {
+      throw new Error(
+        "This request is not currently eligible for resubmission."
+      );
+    }
+
+    if (!request.adviser_user_id) {
+      throw new Error(
+        "The student's assigned Academic Adviser could not be found."
+      );
+    }
+
+    const currentAcademicYear = data.currentAcademicYear.trim();
+    const semester = data.semester.trim();
+    const reason = data.reason.trim();
+
+    if (!currentAcademicYear || !semester || !reason) {
+      throw new Error(
+        "Academic year, semester, and reason for leave are required."
+      );
+    }
+
+    const assignmentResult = await client.query(
+      `
+      SELECT
+        aws.workflow_step_id,
+        sp.adviser_user_id,
+        adviser.email AS adviser_email
+      FROM public.student_profiles sp
+      JOIN public.app_users adviser
+        ON adviser.user_id = sp.adviser_user_id
+       AND adviser.is_active = TRUE
+      JOIN public.user_roles ur
+        ON ur.user_id = adviser.user_id
+      JOIN public.roles assigned_role
+        ON assigned_role.role_id = ur.role_id
+       AND assigned_role.role_code = 'ADVISER'
+      JOIN public.approval_workflow_steps aws
+        ON aws.workflow_id = $2
+       AND aws.step_order = 1
+       AND aws.is_active = TRUE
+      JOIN public.roles step_role
+        ON step_role.role_id = aws.role_id
+       AND step_role.role_code = 'ADVISER'
+      WHERE sp.user_id = $1
+      FOR SHARE OF sp, adviser
+      `,
+      [studentUserId, request.workflow_id]
+    );
+
+    if (assignmentResult.rowCount !== 1) {
+      throw new Error(
+        "The initial Academic Adviser assignment could not be resolved."
+      );
+    }
+
+    const assignment = assignmentResult.rows[0];
+
+    const studentName = [
+      request.given_name,
+      request.middle_name,
+      request.family_name
+    ].filter(Boolean).join(" ");
+
+    const nextCycle = Number(request.cycle_number) + 1;
+
+    const detailsResult = await client.query(
+      `
+      UPDATE public.leave_of_absence_details
+      SET
+        current_academic_year = $2,
+        semester = $3,
+        reason_of_absence = $4
+      WHERE request_id = $1
+      `,
+      [
+        request.request_id,
+        currentAcademicYear,
+        semester,
+        reason
+      ]
+    );
+
+    if (detailsResult.rowCount !== 1) {
+      throw new Error(
+        "The original Leave of Absence details could not be found."
+      );
+    }
+
+    const approvalResult = await client.query(
+      `
+      INSERT INTO public.document_approvals (
+        instance_id,
+        workflow_step_id,
+        cycle_number,
+        assigned_approver_user_id,
+        status
+      )
+      VALUES ($1, $2, $3, $4, 'Pending')
+      RETURNING approval_id
+      `,
+      [
+        request.instance_id,
+        assignment.workflow_step_id,
+        nextCycle,
+        assignment.adviser_user_id
+      ]
+    );
+
+    const approvalId = approvalResult.rows[0].approval_id;
+
+    await client.query(
+      `
+      UPDATE public.document_approval_instances
+      SET
+        current_step_id = $1,
+        cycle_number = $2,
+        status = 'In Progress',
+        started_at = NOW(),
+        completed_at = NULL
+      WHERE instance_id = $3
+      `,
+      [
+        assignment.workflow_step_id,
+        nextCycle,
+        request.instance_id
+      ]
+    );
+
+    await client.query(
+      `
+      UPDATE public.document_requests
+      SET
+        status = 'Pending',
+        submitted_at = NOW(),
+        completed_at = NULL
+      WHERE request_id = $1
+      `,
+      [request.request_id]
+    );
+
+    await client.query(
+      `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, NULL, $2, 'Resubmitted', NULL, $3, $4, $5)
+      `,
+      [
+        request.instance_id,
+        studentUserId,
+        assignment.workflow_step_id,
+        nextCycle,
+        "Student resubmitted the revised Leave of Absence Form."
+      ]
+    );
+
+    await client.query(
+      `
+      INSERT INTO public.document_approval_history (
+        instance_id,
+        approval_id,
+        actor_user_id,
+        action,
+        from_step_id,
+        to_step_id,
+        cycle_number,
+        remarks
+      )
+      VALUES ($1, $2, NULL, 'Assigned', NULL, $3, $4, $5)
+      `,
+      [
+        request.instance_id,
+        approvalId,
+        assignment.workflow_step_id,
+        nextCycle,
+        `Assigned to the student's Academic Adviser (${assignment.adviser_email}).`
+      ]
+    );
+
+    await client.query(
+      `
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES ($1, $2, 'new_request', $3, $4)
+      `,
+      [
+        assignment.adviser_user_id,
+        request.request_id,
+        "Revised document awaiting your review",
+        `${studentName} resubmitted Leave of Absence Form (${request.reference_number}). It is awaiting your review.`
+      ]
+    );
+
+    await client.query(
+      `
+      INSERT INTO public.notifications (
+        user_id,
+        request_id,
+        notification_type,
+        title,
+        message
+      )
+      VALUES ($1, $2, 'submission_confirmation', $3, $4)
+      `,
+      [
+        studentUserId,
+        request.request_id,
+        "Revised document submitted successfully",
+        `Your revised Leave of Absence Form (${request.reference_number}) was submitted successfully and is awaiting review.`
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      id: request.request_id.toString(),
+      referenceNumber: request.reference_number,
+      status: "Pending",
+      cycleNumber: nextCycle,
+      message: "Leave of Absence Form resubmitted successfully.",
+      student: studentName
     };
   } catch (error) {
     await client.query("ROLLBACK");

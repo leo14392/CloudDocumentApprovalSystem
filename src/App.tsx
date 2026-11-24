@@ -10,9 +10,26 @@ import {
   type AuthenticatedUser,
 } from "./lib/auth";
 import { getApproverDashboardApi } from "./lib/dashboard";
-import { getRequestsApi, getRequestDetailsApi } from "./lib/requests";
+import {
+  getRequestsApi,
+  getRequestDetailsApi,
+  approveRequestApi,
+  rejectRequestApi,
+  returnRequestApi,
+  resubmitLoadRevisionRequestApi,
+  resubmitShifterApplicationRequestApi,
+  resubmitLeaveOfAbsenceRequestApi,
+  type ShifterApplicationDetails,
+  type LeaveOfAbsenceDetails,
+} from "./lib/requests";
 
-import type { Page, Role, RequestItem, Status } from "./types";
+import type {
+  Page,
+  Role,
+  RequestItem,
+  Status,
+  LoadRevisionPermit,
+} from "./types";
 import type { RequestSubmission } from "./pages/requests/RequestForm";
 
 import { Shell } from "./components/layout/AppShell";
@@ -36,7 +53,22 @@ import { ReviewPage } from "./pages/review/ReviewPage";
 
 import { NotificationsPage, SignaturePage } from "./pages/account/AccountPages";
 
-import { defaultPermit } from "./data/initialData";
+function normalizeRequestStatus(status: string): Status {
+  const validStatuses: Status[] = [
+    "Pending",
+    "Approved",
+    "Rejected",
+    "Returned for Revision",
+    "Completed",
+  ];
+
+  if (!validStatuses.includes(status as Status)) {
+    console.warn(`Unknown request status received: ${status}`);
+    return "Pending";
+  }
+
+  return status as Status;
+}
 
 export default function App() {
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
@@ -52,6 +84,18 @@ export default function App() {
   const [requests, setRequests] = useState<RequestItem[]>([]);
   const [queue, setQueue] = useState<RequestItem[]>([]);
   const [submitted, setSubmitted] = useState<RequestItem | null>(null);
+
+  const [editingReferenceNumber, setEditingReferenceNumber] = useState<
+    string | null
+  >(null);
+
+  const [editingPermit, setEditingPermit] = useState<LoadRevisionPermit | null>(
+    null,
+  );
+
+  const [editingGenericData, setEditingGenericData] = useState<
+    ShifterApplicationDetails | LeaveOfAbsenceDetails | null
+  >(null);
 
   // Restore an existing authenticated session when the app starts.
   useEffect(() => {
@@ -104,7 +148,7 @@ export default function App() {
           student: request.student,
           date: request.date,
           stage: request.stage,
-          status: request.status as Status,
+          status: normalizeRequestStatus(request.status),
         }));
 
         setRequests(liveRequests);
@@ -149,7 +193,7 @@ export default function App() {
               day: "numeric",
             }),
             stage: request.status,
-            status: request.status as Status,
+            status: normalizeRequestStatus(request.status),
           }),
         );
 
@@ -211,6 +255,35 @@ export default function App() {
     setPage("detail");
   }
 
+  function editReturnedRevision(
+    data:
+      | LoadRevisionPermit
+      | ShifterApplicationDetails
+      | LeaveOfAbsenceDetails,
+    documentCode: string,
+  ) {
+    if (!selectedRequest) return;
+
+    setEditingReferenceNumber(selectedRequest.id);
+    setEditingPermit(null);
+    setEditingGenericData(null);
+
+    if (documentCode === "LOAD_REVISION") {
+      setEditingPermit(data as LoadRevisionPermit);
+      setSelectedType("Load Revision Form");
+    } else if (documentCode === "SHIFT_APPLICATION") {
+      setEditingGenericData(data as ShifterApplicationDetails);
+      setSelectedType("Shifter's Application Form");
+    } else if (documentCode === "LEAVE_ABSENCE") {
+      setEditingGenericData(data as LeaveOfAbsenceDetails);
+      setSelectedType("Leave of Absence Form");
+    } else {
+      return;
+    }
+
+    setPage("form");
+  }
+
   async function openNotificationRequest(referenceNumber: string) {
     try {
       const details = await getRequestDetailsApi(referenceNumber);
@@ -223,7 +296,7 @@ export default function App() {
           ? new Date(details.submittedAt).toLocaleDateString()
           : "Not available",
         stage: details.status,
-        status: details.status as Status,
+        status: normalizeRequestStatus(details.status),
       };
 
       setSelectedRequest(request);
@@ -241,6 +314,103 @@ export default function App() {
 
   async function submitRequest(submission: RequestSubmission) {
     if (!user) return;
+
+    if (editingReferenceNumber) {
+      try {
+        let result: Awaited<ReturnType<typeof resubmitLoadRevisionRequestApi>>;
+
+        let nextRequest: RequestItem;
+
+        if (submission.kind === "loadRevision") {
+          result = await resubmitLoadRevisionRequestApi(
+            editingReferenceNumber,
+            submission.permit,
+          );
+
+          nextRequest = {
+            id: result.referenceNumber,
+            type: "Academic Load Revision Permit",
+            student: result.student,
+            date: new Date().toLocaleDateString(),
+            stage: "Awaiting review",
+            status: "Pending",
+            permit: submission.permit,
+          };
+        } else if (submission.kind === "shifter") {
+          const shifterResult = await resubmitShifterApplicationRequestApi(
+            editingReferenceNumber,
+            submission.data,
+          );
+
+          nextRequest = {
+            id: shifterResult.referenceNumber,
+            type: "Shifter's Application Form",
+            student: shifterResult.student,
+            date: new Date().toLocaleDateString(),
+            stage: "Awaiting review",
+            status: "Pending",
+            reason: submission.data.reason,
+          };
+        } else {
+          const leaveResult = await resubmitLeaveOfAbsenceRequestApi(
+            editingReferenceNumber,
+            submission.data,
+          );
+
+          nextRequest = {
+            id: leaveResult.referenceNumber,
+            type: "Leave of Absence Form",
+            student: leaveResult.student,
+            date: new Date().toLocaleDateString(),
+            stage: "Awaiting review",
+            status: "Pending",
+            reason: submission.data.reason,
+          };
+        }
+
+        setEditingReferenceNumber(null);
+        setEditingPermit(null);
+        setEditingGenericData(null);
+
+        try {
+          const refreshedRequests = await getRequestsApi();
+
+          setRequests(
+            refreshedRequests.map((request) => ({
+              id: request.id,
+              type: request.type,
+              student: request.student,
+              date: request.date,
+              stage: request.stage,
+              status: normalizeRequestStatus(request.status),
+            })),
+          );
+        } catch (refreshError) {
+          console.error(
+            "Resubmission succeeded, but the request list refresh failed:",
+            refreshError,
+          );
+
+          setRequests((previous) => [
+            nextRequest,
+            ...previous.filter((request) => request.id !== nextRequest.id),
+          ]);
+        }
+
+        setSelectedRequest(nextRequest);
+        setSubmitted(nextRequest);
+      } catch (error) {
+        console.error("Request resubmission failed:", error);
+
+        window.alert(
+          error instanceof Error
+            ? error.message
+            : "Unable to resubmit your request. Please try again.",
+        );
+      }
+
+      return;
+    }
 
     try {
       let nextRequest: RequestItem;
@@ -295,7 +465,7 @@ export default function App() {
             student: request.student,
             date: request.date,
             stage: request.stage,
-            status: request.status as Status,
+            status: normalizeRequestStatus(request.status),
           })),
         );
       } catch (refreshError) {
@@ -323,52 +493,80 @@ export default function App() {
     }
   }
 
-  // Prototype-only review behavior.
-  // This does not persist approval decisions to PostgreSQL.
-  function finishReview(
-    status: Status,
+  // Persist approval, rejection, and revision decisions through the backend.
+  async function finishReview(
+    status: string,
     reason?: string,
     signatureSlot?: string,
   ) {
     if (!selectedRequest) return;
 
-    const nextStatus: Status = signatureSlot ? "Pending" : status;
+    try {
+      if (status === "Approved") {
+        await approveRequestApi(selectedRequest.id);
+      } else if (status === "Rejected") {
+        await rejectRequestApi(selectedRequest.id, reason ?? "");
+      } else if (status === "Returned for Revision") {
+        await returnRequestApi(selectedRequest.id, reason ?? "");
+      } else {
+        return;
+      }
 
-    const permit = signatureSlot
-      ? {
-          ...(selectedRequest.permit || defaultPermit),
-          signatures: {
-            ...(selectedRequest.permit || defaultPermit).signatures,
-            [signatureSlot]: user
-              ? `${user.givenName} ${user.familyName}`
-              : "Authorized Approver",
-          },
-        }
-      : selectedRequest.permit;
+      // Refresh the authoritative request list.
+      const updatedRequests = await getRequestsApi();
 
-    const updated: RequestItem = {
-      ...selectedRequest,
-      status: nextStatus,
-      reason,
-      permit,
-      stage: signatureSlot ? `${signatureSlot} signed` : selectedRequest.stage,
-    };
+      setRequests(
+        updatedRequests.map((request) => ({
+          id: request.id,
+          type: request.type,
+          student: request.student,
+          date: request.date,
+          stage: request.stage,
+          status: normalizeRequestStatus(request.status),
+        })),
+      );
 
-    setSelectedRequest(updated);
+      // Refresh the approver queue after a review decision.
+      if (user && !user.roles.includes("STUDENT")) {
+        const dashboard = await getApproverDashboardApi();
 
-    setRequests((previous) =>
-      previous.map((request) =>
-        request.id === selectedRequest.id ? updated : request,
-      ),
-    );
+        setQueue(
+          dashboard.pendingRequests.map((request) => ({
+            id: request.referenceNumber,
+            type: request.type,
+            student: request.studentName,
+            date: new Date(request.submittedAt).toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            }),
+            stage: request.status,
+            status: normalizeRequestStatus(request.status),
+          })),
+        );
+      }
 
-    setQueue((previous) =>
-      previous.map((request) =>
-        request.id === selectedRequest.id ? updated : request,
-      ),
-    );
+      setSelectedRequest(null);
+      setPage("requests");
 
-    setPage("detail");
+      window.alert(
+        status === "Approved"
+          ? "Request approved successfully."
+          : status === "Rejected"
+            ? "Request rejected successfully."
+            : "Request returned for revision.",
+      );
+    } catch (error) {
+      console.error("Review action failed:", error);
+      console.error("Selected request:", selectedRequest);
+      console.error("Review status:", status);
+
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to process this request.",
+      );
+    }
   }
 
   if (authLoading) {
@@ -499,7 +697,16 @@ export default function App() {
       {page === "form" && (
         <RequestForm
           type={selectedType}
-          cancel={() => setPage("new")}
+          initialPermit={editingPermit ?? undefined}
+          initialGenericData={editingGenericData ?? undefined}
+          isResubmission={Boolean(editingReferenceNumber)}
+          cancel={() => {
+            if (editingReferenceNumber) {
+              setPage("detail");
+            } else {
+              setPage("new");
+            }
+          }}
           submit={submitRequest}
         />
       )}
@@ -519,6 +726,7 @@ export default function App() {
             role={role}
             back={() => setPage("requests")}
             review={() => setPage("review")}
+            editRevision={editReturnedRevision}
           />
         ) : (
           <Info

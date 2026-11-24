@@ -57,7 +57,7 @@ export async function getApproverDashboardData(
   }
 
   try {
-    const dashboard = await getApproverDashboard();
+    const dashboard = await getApproverDashboard(authenticatedUser.id);
 
     return res.status(200).json({
       success: true,

@@ -3,6 +3,20 @@ const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || "http://localhost:5000"
 ).replace(/\/+$/, "");
 
+import type { LoadRevisionPermit } from "../types";
+
+interface ResubmitRequestResponse {
+  success: boolean;
+  message: string;
+  request: {
+    id: string;
+    referenceNumber: string;
+    status: string;
+    cycleNumber: number;
+    student: string;
+  };
+}
+
 // ============================================
 // REQUEST DETAIL TYPES
 // ============================================
@@ -28,6 +42,16 @@ export interface RequestStudent {
   department: string | null;
   program: string | null;
   yearLevel: number | null;
+}
+
+export interface ApprovalHistoryItem {
+  historyId: string;
+  action: string;
+  actorUserId: string | null;
+  actorName: string | null;
+  actorRole: string | null;
+  remarks: string | null;
+  createdAt: string | null;
 }
 
 export interface LoadRevisionDetails {
@@ -80,6 +104,7 @@ export interface RequestDetail {
   completedAt: string | null;
   student: RequestStudent;
   details: RequestDetails;
+  approvalHistory: ApprovalHistoryItem[];
 }
 
 interface RequestDetailApiResponse {
@@ -108,13 +133,22 @@ interface RequestListApiResponse {
 }
 
 // ============================================
+// APPROVAL TYPES
+// ============================================
+
+interface ApprovalApiResponse {
+  success: boolean;
+  message?: string;
+}
+
+// ============================================
 // REQUEST API ERROR
 // ============================================
 
 export class RequestApiError extends Error {
   constructor(
     message: string,
-    public status: number
+    public status: number,
   ) {
     super(message);
     this.name = "RequestApiError";
@@ -126,7 +160,7 @@ export class RequestApiError extends Error {
 // ============================================
 
 export async function getRequestDetailsApi(
-  referenceNumber: string
+  referenceNumber: string,
 ): Promise<RequestDetail> {
   let response: Response;
 
@@ -137,13 +171,13 @@ export async function getRequestDetailsApi(
         method: "GET",
         credentials: "include",
         headers: {
-          Accept: "application/json"
-        }
-      }
+          Accept: "application/json",
+        },
+      },
     );
   } catch {
     throw new Error(
-      "Cannot connect to the server. Check that the backend is running."
+      "Cannot connect to the server. Check that the backend is running.",
     );
   }
 
@@ -152,8 +186,12 @@ export async function getRequestDetailsApi(
   if (!response.ok) {
     throw new RequestApiError(
       data.message || "Unable to load request details.",
-      response.status
+      response.status,
     );
+  }
+
+  if (!data.success || !data.request) {
+    throw new Error(data.message || "Invalid request details response.");
   }
 
   return (data as RequestDetailApiResponse).request;
@@ -171,12 +209,12 @@ export async function getRequestsApi(): Promise<RequestListItem[]> {
       method: "GET",
       credentials: "include",
       headers: {
-        Accept: "application/json"
-      }
+        Accept: "application/json",
+      },
     });
   } catch {
     throw new Error(
-      "Cannot connect to the server. Check that the backend is running."
+      "Cannot connect to the server. Check that the backend is running.",
     );
   }
 
@@ -185,9 +223,248 @@ export async function getRequestsApi(): Promise<RequestListItem[]> {
   if (!response.ok) {
     throw new RequestApiError(
       data.message || "Unable to retrieve requests.",
+      response.status,
+    );
+  }
+
+  if (!data.success || !Array.isArray(data.requests)) {
+    throw new Error(data.message || "Invalid requests response.");
+  }
+
+  return (data as RequestListApiResponse).requests;
+}
+
+// ============================================
+// APPROVE REQUEST API
+// ============================================
+
+export async function approveRequestApi(
+  referenceNumber: string,
+): Promise<string> {
+  let response: Response;
+
+  try {
+    response = await fetch(
+      `${API_BASE_URL}/api/requests/${encodeURIComponent(referenceNumber)}/approve`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+        },
+      },
+    );
+  } catch {
+    throw new Error(
+      "Cannot connect to the server. Check that the backend is running.",
+    );
+  }
+
+  const data = (await response.json().catch(() => ({}))) as ApprovalApiResponse;
+
+  if (!response.ok) {
+    throw new RequestApiError(
+      data.message || "Unable to approve this request.",
+      response.status,
+    );
+  }
+
+  if (!data.success) {
+    throw new Error(data.message || "The approval was unsuccessful.");
+  }
+
+  return data.message || "Request approved successfully.";
+}
+
+// ============================================
+// REJECT REQUEST API
+// ============================================
+
+
+export async function rejectRequestApi(
+  referenceNumber: string,
+  remarks: string
+) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/requests/${encodeURIComponent(referenceNumber)}/reject`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ remarks })
+    }
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new RequestApiError(
+      data.message || "Unable to reject request.",
       response.status
     );
   }
 
-  return (data as RequestListApiResponse).requests;
+  if (!data.success) {
+    throw new Error(data.message || "Unable to reject request.");
+  }
+
+  return data;
+}
+
+export async function returnRequestApi(
+  referenceNumber: string,
+  remarks: string
+) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/requests/${encodeURIComponent(referenceNumber)}/return`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ remarks })
+    }
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new RequestApiError(
+      data.message || "Unable to return request for revision.",
+      response.status
+    );
+  }
+
+  if (!data.success) {
+    throw new Error(data.message || "Unable to return request for revision.");
+  }
+
+  return data;
+}
+
+export async function resubmitLoadRevisionRequestApi(
+  referenceNumber: string,
+  permit: LoadRevisionPermit
+): Promise<ResubmitRequestResponse["request"]> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/requests/${encodeURIComponent(referenceNumber)}/resubmit`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        term: permit.term,
+        schoolYear: permit.schoolYear,
+        permitDate: permit.permitDate,
+
+        withdraw: permit.withdraw.map((subject) => ({
+          course: subject.course,
+          title: subject.title,
+          units: Number(subject.units),
+          closed: false,
+        })),
+
+        add: permit.add.map((subject) => ({
+          course: subject.course,
+          title: subject.title,
+          units: Number(subject.units),
+          closed: Boolean(subject.closed),
+        })),
+
+        loadBeforeUnits: Number(permit.loadBeforeUnits),
+        loadBeforeHours: Number(permit.loadBeforeHours),
+        loadAfterUnits: Number(permit.loadAfterUnits),
+        loadAfterHours: Number(permit.loadAfterHours),
+
+        conflict: permit.conflict,
+        dissolved: permit.dissolved,
+        otherReason: permit.otherReason,
+      }),
+    }
+  );
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || "Unable to resubmit the Load Revision request."
+    );
+  }
+
+  return data.request;
+}
+
+export async function resubmitShifterApplicationRequestApi(
+  referenceNumber: string,
+  data: {
+  intendedProgram: string;
+  reason: string;
+}
+): Promise<ResubmitRequestResponse["request"]> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/requests/${encodeURIComponent(referenceNumber)}/resubmit`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+        body: JSON.stringify({
+        intendedProgram: data.intendedProgram,
+        reason: data.reason,
+      }),
+    }
+  );
+
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      result.message || "Unable to resubmit the Shifter's Application."
+    );
+  }
+
+  return result.request;
+}
+
+export async function resubmitLeaveOfAbsenceRequestApi(
+  referenceNumber: string,
+  data: {
+    currentAcademicYear: string;
+    semester: string;
+    reason: string;
+  }
+): Promise<ResubmitRequestResponse["request"]> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/requests/${encodeURIComponent(referenceNumber)}/resubmit`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        currentAcademicYear: data.currentAcademicYear,
+        semester: data.semester,
+        reason: data.reason,
+      }),
+    }
+  );
+
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      result.message || "Unable to resubmit the Leave of Absence request."
+    );
+  }
+
+  return result.request;
 }
