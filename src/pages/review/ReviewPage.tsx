@@ -40,6 +40,13 @@ export function GenericReviewPage({
 
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState(false);
+  const [studentInfo, setStudentInfo] = useState<
+    Awaited<ReturnType<typeof getRequestDetailsApi>>["student"] | null
+  >(null);
+
+  const [requestDetails, setRequestDetails] = useState<Awaited<
+    ReturnType<typeof getRequestDetailsApi>
+  > | null>(null);
 
   // Fetch approval history for the selected request.
   useEffect(() => {
@@ -54,6 +61,8 @@ export function GenericReviewPage({
 
         if (!cancelled) {
           setApprovalHistory(requestDetails.approvalHistory ?? []);
+          setStudentInfo(requestDetails.student);
+          setRequestDetails(requestDetails);
         }
       } catch (error) {
         console.error("Unable to load approval history:", error);
@@ -163,16 +172,20 @@ export function GenericReviewPage({
 
             <div className="paper-row">
               <span>Student Name</span>
-              <b>{request.student}</b>
+              <b>{studentInfo?.fullName ?? "—"}</b>
               <span>Student ID</span>
-              <b>2021-1234</b>
+              <b>{studentInfo?.studentNumber ?? "—"}</b>
             </div>
 
             <div className="paper-row">
               <span>Program</span>
-              <b>BS Information Technology</b>
+              <b>{studentInfo?.program ?? "—"}</b>
               <span>Year Level</span>
-              <b>4th Year</b>
+              <b>
+                {studentInfo?.yearLevel
+                  ? `${studentInfo.yearLevel}${Number(studentInfo.yearLevel) === 1 ? "st" : Number(studentInfo.yearLevel) === 2 ? "nd" : Number(studentInfo.yearLevel) === 3 ? "rd" : "th"} Year`
+                  : "—"}
+              </b>
             </div>
 
             <div className="paper-block">
@@ -212,9 +225,12 @@ export function GenericReviewPage({
           <div className="review-section">
             <h3>Student information</h3>
 
-            <Info label="Student ID" value="2021-1234" />
-            <Info label="Email" value="andrea.santos@g.msuiit.edu.ph" />
-            <Info label="Program" value="BS Information Technology" />
+            <Info
+              label="Student ID"
+              value={studentInfo?.studentNumber ?? "—"}
+            />
+            <Info label="Email" value={studentInfo?.email ?? "—"} />
+            <Info label="Program" value={studentInfo?.program ?? "—"} />
 
             <Button variant="ghost" icon="mail">
               Contact student
