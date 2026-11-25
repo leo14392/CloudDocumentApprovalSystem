@@ -918,7 +918,7 @@ export async function getRequestDetails(
 
   const request = requestResult.rows[0];
 
-    // Retrieve the approval history for this request.
+  // Retrieve the approval history for this request.
   const historyResult = await pool.query(
     `
     SELECT
@@ -974,6 +974,149 @@ export async function getRequestDetails(
     remarks: row.remarks,
     createdAt: row.created_at
   }));
+
+  // Retrieve the latest approval workflow instance for this request.
+  const workflowInstanceResult = await pool.query(
+    `
+    SELECT
+      dai.instance_id,
+      dai.workflow_id,
+      dai.current_step_id,
+      dai.cycle_number,
+      dai.status,
+      dai.started_at,
+      dai.completed_at
+    FROM public.document_approval_instances dai
+    WHERE dai.request_id = $1
+    ORDER BY dai.started_at DESC, dai.instance_id DESC
+    LIMIT 1
+    `,
+    [request.request_id]
+  );
+
+  let workflowProgress = null;
+
+  if (workflowInstanceResult.rowCount === 1) {
+    const instance = workflowInstanceResult.rows[0];
+
+    // Retrieve configured workflow steps and their current-cycle assignments.
+    const workflowStepsResult = await pool.query(
+      `
+      SELECT
+        aws.workflow_step_id,
+        aws.step_order,
+        aws.step_name,
+        r.role_name,
+
+        COALESCE(
+          (
+            SELECT json_agg(
+              json_build_object(
+                'userId', da.assigned_approver_user_id::text,
+                'name', NULLIF(
+                  CONCAT_WS(
+                    ' ',
+                    approver.given_name,
+                    approver.middle_name,
+                    approver.family_name
+                  ),
+                  ''
+                ),
+                'status', da.status,
+                'assignedAt', da.assigned_at,
+                'actedAt', da.acted_at,
+                'remarks', da.remarks
+              )
+              ORDER BY da.assigned_at
+            )
+            FROM public.document_approvals da
+            LEFT JOIN public.app_users approver
+              ON approver.user_id = da.assigned_approver_user_id
+            WHERE da.instance_id = $1
+              AND da.workflow_step_id = aws.workflow_step_id
+              AND da.cycle_number = $2
+          ),
+          '[]'::json
+        ) AS approvers
+
+      FROM public.approval_workflow_steps aws
+      JOIN public.roles r
+        ON r.role_id = aws.role_id
+      WHERE aws.workflow_id = $3
+        AND aws.is_active = TRUE
+      ORDER BY aws.step_order ASC
+      `,
+      [
+        instance.instance_id,
+        instance.cycle_number,
+        instance.workflow_id
+      ]
+    );
+
+    const workflowSteps = workflowStepsResult.rows.map((row) => {
+      const approvers = row.approvers ?? [];
+
+      const hasRejectedApprover = approvers.some(
+        (approver: { status: string }) =>
+          approver.status === "Rejected"
+      );
+
+      const allApproved =
+        approvers.length > 0 &&
+        approvers.every(
+          (approver: { status: string }) =>
+            approver.status === "Approved"
+        );
+
+      let stepStatus = "Pending";
+
+      if (hasRejectedApprover) {
+        stepStatus = "Rejected";
+      } else if (allApproved) {
+        stepStatus = "Approved";
+      } else if (
+        row.workflow_step_id.toString() ===
+        instance.current_step_id?.toString()
+      ) {
+        stepStatus = "Current";
+      }
+
+      return {
+        stepId: row.workflow_step_id.toString(),
+        stepOrder: row.step_order,
+        stepName: row.step_name,
+        roleName: row.role_name,
+        status: stepStatus,
+        approvers
+      };
+    });
+
+    const completedSteps = workflowSteps.filter(
+      (step) => step.status === "Approved"
+    ).length;
+
+    const currentStep = workflowSteps.find(
+      (step) =>
+        step.stepId === instance.current_step_id?.toString()
+    ) ?? null;
+
+    workflowProgress = {
+      instanceId: instance.instance_id.toString(),
+      workflowStatus: instance.status,
+      cycleNumber: instance.cycle_number,
+      startedAt: instance.started_at,
+      completedAt: instance.completed_at,
+      currentStep,
+      workflowSteps,
+      completedSteps,
+      totalSteps: workflowSteps.length,
+      progressPercentage: workflowSteps.length > 0
+        ? Math.round(
+            (completedSteps / workflowSteps.length) * 100
+          )
+        : 0
+    };
+  }
 
   let details: Record<string, unknown> | null = null;
 
@@ -1099,7 +1242,8 @@ export async function getRequestDetails(
     },
 
     details,
-    approvalHistory
+    approvalHistory,
+    workflowProgress
   };
 }
 

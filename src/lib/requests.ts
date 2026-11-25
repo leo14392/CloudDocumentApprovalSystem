@@ -54,6 +54,39 @@ export interface ApprovalHistoryItem {
   createdAt: string | null;
 }
 
+
+export interface WorkflowApprover {
+  userId: string;
+  name: string | null;
+  status: string;
+  assignedAt: string | null;
+  actedAt: string | null;
+  remarks: string | null;
+}
+
+export interface WorkflowStep {
+  stepId: string;
+  stepOrder: number;
+  stepName: string;
+  roleName: string;
+  status: "Approved" | "Current" | "Pending" | "Rejected";
+  approvers: WorkflowApprover[];
+}
+
+export interface WorkflowProgress {
+  instanceId: string;
+  workflowStatus: string;
+  cycleNumber: number;
+  startedAt: string;
+  completedAt: string | null;
+  currentStep: WorkflowStep | null;
+  workflowSteps: WorkflowStep[];
+  completedSteps: number;
+  totalSteps: number;
+  progressPercentage: number;
+}
+
+
 export interface LoadRevisionDetails {
   academic_term: string;
   school_year: string;
@@ -94,6 +127,7 @@ export type RequestDetails =
   | LeaveOfAbsenceDetails
   | null;
 
+
 export interface RequestDetail {
   id: string;
   referenceNumber: string;
@@ -105,7 +139,9 @@ export interface RequestDetail {
   student: RequestStudent;
   details: RequestDetails;
   approvalHistory: ApprovalHistoryItem[];
+  workflowProgress: WorkflowProgress | null;
 }
+
 
 interface RequestDetailApiResponse {
   success: boolean;

@@ -8,3 +8,153 @@
 @media(max-width:1100px){.form-grid.four-col{grid-template-columns:repeat(2,1fr)}.subject-fields{grid-template-columns:1fr 1fr 80px}.check-field{grid-column:1/-1}.approval-slots{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:820px){.official-preview{overflow:auto}.official-paper{margin:20px}.form-grid.three-col{grid-template-columns:1fr 1fr}}
 @media(max-width:600px){.form-grid.three-col,.form-grid.four-col,.subject-fields,.readonly-signatures,.approval-slots,.permit-progress{grid-template-columns:1fr}.subject-editor-head{flex-direction:column}.subject-editor-head .btn{width:100%}.official-fields{grid-template-columns:1fr}.reason-checks{flex-direction:column;gap:10px}}
+/* Request Details — Approval Progress */
+.approval-progress-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.approval-progress-summary strong {
+  color: var(--maroon);
+  font-size: 18px;
+}
+
+.approval-progress-track {
+  width: 100%;
+  height: 9px;
+  background: #eceef1;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.approval-progress-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: inherit;
+  transition: width 0.3s ease;
+}
+
+.current-approval {
+  padding: 14px;
+  margin: 16px 0;
+  background: var(--maroon-soft);
+  border: 1px solid #ead3dc;
+  border-radius: 9px;
+}
+
+.current-approval h4 {
+  margin: 6px 0;
+  font-size: 13px;
+}
+
+.workflow-steps {
+  margin-top: 14px;
+}
+
+.workflow-step {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.workflow-step:last-child {
+  border-bottom: 0;
+}
+
+.workflow-step-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.workflow-step-heading > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.workflow-step-number {
+  width: 27px;
+  height: 27px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.workflow-step-heading strong {
+  font-size: 11px;
+}
+
+.workflow-step-heading p {
+  margin-top: 3px;
+}
+
+.workflow-status {
+  padding: 5px 8px;
+  border-radius: 12px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.workflow-status.approved {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.workflow-status.current {
+  background: var(--maroon-soft);
+  color: var(--maroon);
+}
+
+.workflow-status.rejected {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.workflow-approvers {
+  margin: 10px 0 0 37px;
+  padding: 10px;
+  background: var(--surface);
+  border-radius: 7px;
+}
+
+.workflow-approvers > div + div {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.workflow-approvers strong {
+  display: inline-block;
+  font-size: 10px;
+  margin-right: 8px;
+}
+
+.workflow-approvers span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.workflow-approvers .small {
+  margin-top: 5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .workflow-step-heading {
+    flex-wrap: wrap;
+  }
+
+  .workflow-approvers {
+    margin-left: 0;
+  }
+}

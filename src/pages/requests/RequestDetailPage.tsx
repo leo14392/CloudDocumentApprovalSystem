@@ -35,19 +35,113 @@ function formatValue(value: string | number | boolean | null | undefined) {
   return String(value);
 }
 
-function ApprovalNotice() {
+function ApprovalNotice({
+  workflowProgress,
+}: {
+  workflowProgress: NonNullable<RequestDetail["workflowProgress"]>;
+}) {
+  const currentStep = workflowProgress.currentStep;
+
   return (
     <aside className="card timeline-card">
       <h3>Approval progress</h3>
-      <p>Current routing and signatory status.</p>
+      <p>Current routing and approval status.</p>
 
-      <div className="sequence-note">
-        <Icon name="clock" />
-        <p>
-          Approval routing has not yet been configured. Approver assignments,
-          approval history, and signature status will appear here once the
-          workflow is implemented.
-        </p>
+      <div className="approval-progress-summary">
+        <strong>{workflowProgress.progressPercentage}% complete</strong>
+        <span>
+          {workflowProgress.completedSteps} of {workflowProgress.totalSteps}{" "}
+          steps approved
+        </span>
+
+        <div className="approval-progress-track">
+          <div
+            className="approval-progress-fill"
+            style={{
+              width: `${workflowProgress.progressPercentage}%`,
+            }}
+          />
+        </div>
+      </div>
+
+      {currentStep ? (
+        <div className="current-approval">
+          <span className="small">Currently awaiting approval</span>
+          <h4>{currentStep.stepName}</h4>
+
+          {currentStep.approvers.map((approver) => (
+            <div key={approver.userId}>
+              <strong>{approver.name}</strong>
+              <p className="small">{approver.status}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="sequence-note">
+          <Icon name="check-circle" />
+          <p>No approval step is currently pending.</p>
+        </div>
+      )}
+
+      <hr />
+
+      <h4>Approval route</h4>
+
+      <div className="workflow-steps">
+        {workflowProgress.workflowSteps.map((step) => (
+          <div className="workflow-step" key={step.stepId}>
+            <div className="workflow-step-heading">
+              <span className="workflow-step-number">{step.stepOrder}</span>
+
+              <div>
+                <strong>{step.stepName}</strong>
+                <p className="small">{step.roleName}</p>
+              </div>
+
+              <span className={`workflow-status ${step.status.toLowerCase()}`}>
+                {step.status}
+              </span>
+            </div>
+
+            {step.approvers.length > 0 && (
+              <div className="workflow-approvers">
+                {step.approvers.map((approver) => (
+                  <div key={approver.userId}>
+                    <strong>{approver.name}</strong>
+                    <span>{approver.status}</span>
+
+                    {approver.actedAt && (
+                      <p className="small">
+                        Action: {formatDate(approver.actedAt)}
+                      </p>
+                    )}
+
+                    {approver.remarks && (
+                      <p className="small">Remarks: {approver.remarks}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <hr />
+
+      <h4>Workflow information</h4>
+
+      <div className="info-grid">
+        <Info label="Workflow status" value={workflowProgress.workflowStatus} />
+        <Info
+          label="Current cycle"
+          value={String(workflowProgress.cycleNumber)}
+        />
+        <Info label="Started" value={formatDate(workflowProgress.startedAt)} />
+        <Info
+          label="Completed"
+          value={formatDate(workflowProgress.completedAt)}
+        />
       </div>
 
       <hr />
@@ -549,7 +643,14 @@ export function Detail({
               </section>
             </div>
 
-            <ApprovalNotice />
+            {details.workflowProgress ? (
+              <ApprovalNotice workflowProgress={details.workflowProgress} />
+            ) : (
+              <aside className="card timeline-card">
+                <h3>Approval progress</h3>
+                <p>Workflow information is not available for this request.</p>
+              </aside>
+            )}
           </div>
         </>
       )}

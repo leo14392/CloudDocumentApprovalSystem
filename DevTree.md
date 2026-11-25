@@ -1,6 +1,6 @@
 # File Tree: CloudDocumentApprovalSystem
 
-**Generated:** 11/22/2026, 12:57:41 PM
+**Generated:** 11/25/2026, 4:17:08 PM
 **Root Path:** `c:\Users\HP\Desktop\CloudDocumentApprovalSystem`
 
 ```
@@ -38,6 +38,8 @@
 │   │   │   ├── 📄 dashboard.service.ts
 │   │   │   ├── 📄 notification.service.ts
 │   │   │   └── 📄 request.service.ts
+│   │   ├── 📁 services.old.request.ts
+│   │   │   └── 📄 request.service.ts
 │   │   ├── 📁 types
 │   │   │   ├── 📄 auth.ts
 │   │   │   └── 📄 express-session.d.ts
@@ -49,14 +51,25 @@
 ├── 📁 database
 │   ├── 📁 backups
 │   │   ├── 📄 cloud_document_approval_before_workflow.backup
-│   │   ├── 📄 cloud_document_approval_v2.backup
-│   │   └── 📄 cloud_document_approval_v3.backup
+│   │   ├── 📄 cloud_document_approval_v3.backup
+│   │   └── 📄 cloud_document_approval_v4.backup
 │   ├── 📁 migrations
 │   │   ├── 📄 002_update_shifter_and_leave_details.sql
 │   │   └── 📄 003_create_notifications.sql
 │   ├── 📁 seeds
 │   │   └── 📄 demo_profiles.sql
 │   └── 📄 schema-inspection.sql
+├── 📁 diagrams
+│   ├── 🖼️ 01-Use-Case-Diagram.png
+│   ├── 🖼️ 02-ERD-Detailed.png
+│   ├── 🖼️ 06-system-architecture.png
+│   ├── 🖼️ 08-dfd-context.png
+│   ├── 📦 10. API Integration.zip
+│   ├── 📦 4. Activity Diagram.zip
+│   ├── 📦 5. Sequence Diagram.zip
+│   ├── 📦 7. UI Screen Flow Diagram.zip
+│   ├── 🖼️ 9-dfd-level-1.png
+│   └── 📦 Class Diagram.zip
 ├── 📁 public
 │   └── 🖼️ favicon.svg
 ├── 📁 src
@@ -104,9 +117,9 @@
 ├── ⚙️ .gitattributes
 ├── ⚙️ .gitignore
 ├── ⚙️ .mise.toml
-├── 📝 AGENTS.md
 ├── 📝 CLAUDE.md
 ├── 📝 DevTree.md
+├── 📝 NeedsFixing.md
 ├── 📝 implementationRoadMap.md
 ├── 🌐 index.html
 ├── ⚙️ package-lock.json
