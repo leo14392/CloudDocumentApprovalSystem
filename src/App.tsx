@@ -697,6 +697,7 @@ export default function App() {
       {page === "form" && (
         <RequestForm
           type={selectedType}
+          studentProfile={user}
           initialPermit={editingPermit ?? undefined}
           initialGenericData={editingGenericData ?? undefined}
           isResubmission={Boolean(editingReferenceNumber)}

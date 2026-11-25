@@ -3,21 +3,49 @@ import type { LoadRevisionPermit } from "../../../types";
 import { Button, Field, Icon, Modal } from "../../../components/ui";
 import { defaultPermit } from "../../../data/initialData";
 import { SubjectEditor } from "./SubjectEditor";
+import type { AuthenticatedUser } from "../../../lib/auth";
 
 export function LoadRevisionForm({
   cancel,
   submit,
   initialData,
   isResubmission = false,
+  studentProfile,
 }: {
   cancel: () => void;
   submit: (permit: LoadRevisionPermit) => void;
   initialData?: LoadRevisionPermit;
   isResubmission?: boolean;
+  studentProfile: AuthenticatedUser;
 }) {
-  const [data, setData] = useState<LoadRevisionPermit>(
-    () => initialData ?? defaultPermit,
-  );
+  const [data, setData] = useState<LoadRevisionPermit>(() => {
+    if (initialData) return initialData;
+
+    return {
+      ...defaultPermit,
+      familyName: studentProfile.familyName,
+      givenName: studentProfile.givenName,
+      middleName: studentProfile.middleName ?? "",
+      studentId: studentProfile.studentNumber ?? "",
+      college: studentProfile.college ?? "",
+      department: studentProfile.department ?? "",
+      courseYear: [
+        studentProfile.program,
+        studentProfile.yearLevel
+          ? `${studentProfile.yearLevel}${studentProfile.yearLevel === 1 ? "st" : studentProfile.yearLevel === 2 ? "nd" : studentProfile.yearLevel === 3 ? "rd" : "th"} Year`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" – "),
+      studentSignature: [
+        studentProfile.givenName,
+        studentProfile.middleName,
+        studentProfile.familyName,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
+  });
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState("");
   const set = <K extends keyof LoadRevisionPermit>(

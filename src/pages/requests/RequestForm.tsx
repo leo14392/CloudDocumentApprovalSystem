@@ -1,5 +1,7 @@
 import type { LoadRevisionPermit } from "../../types";
 
+import type { AuthenticatedUser } from "../../lib/auth";
+
 import type {
   ShifterApplicationSubmission,
   LeaveOfAbsenceSubmission,
@@ -35,6 +37,7 @@ export function RequestForm({
   initialPermit,
   initialGenericData,
   isResubmission = false,
+  studentProfile,
 }: {
   type: string;
   cancel: () => void;
@@ -42,6 +45,7 @@ export function RequestForm({
   initialPermit?: LoadRevisionPermit;
   isResubmission?: boolean;
   initialGenericData?: ShifterApplicationDetails | LeaveOfAbsenceDetails;
+  studentProfile: AuthenticatedUser;
 }) {
   if (isLoadRevision(type)) {
     return (
@@ -49,6 +53,7 @@ export function RequestForm({
         cancel={cancel}
         initialData={initialPermit}
         isResubmission={isResubmission}
+        studentProfile={studentProfile}
         submit={(permit) =>
           submit({
             kind: "loadRevision",

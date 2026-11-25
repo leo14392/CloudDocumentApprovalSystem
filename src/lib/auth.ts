@@ -11,6 +11,11 @@ export interface AuthenticatedUser {
   middleName: string | null;
   familyName: string;
   roles: string[];
+  studentNumber: string | null;
+  college: string | null;
+  department: string | null;
+  program: string | null;
+  yearLevel: number | null;
 }
 
 interface ApiResponse<T> {
