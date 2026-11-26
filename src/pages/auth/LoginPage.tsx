@@ -65,7 +65,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           </div>
 
           <small className="copyright">
-            © 2025 Mindanao State University – Iligan Institute of Technology
+            © 2026 Mindanao State University – Iligan Institute of Technology
           </small>
         </div>
       </section>

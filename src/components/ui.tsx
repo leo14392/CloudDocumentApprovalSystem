@@ -189,7 +189,7 @@ export function Logo({ light = false }: { light?: boolean }) {
         <b>IIT</b>
       </div>
       <div>
-        <strong>MSU–IIT</strong>
+        <strong>CCS</strong>
         <small>Document Services</small>
       </div>
     </div>
