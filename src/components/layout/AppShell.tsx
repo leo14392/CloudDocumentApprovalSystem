@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Page, Role } from "../../types";
 import type { AuthenticatedUser } from "../../lib/auth";
 import { getUnreadNotificationCountApi } from "../../lib/notifications";
-import { Icon, Logo } from "../ui";
+import { Button, Icon, Logo, Modal } from "../ui";
 
 interface SidebarProps {
   role: Role;
@@ -19,7 +19,7 @@ const studentNav = [
   ["new", "plus", "New Request"],
   ["requests", "file", "My Requests"],
   ["notifications", "bell", "Notifications"],
-  ["settings", "settings", "Profile & Settings"],
+  ["settings", "user", "Profile"],
 ];
 
 const approverNav = [
@@ -28,7 +28,7 @@ const approverNav = [
   ["requests", "file", "Processed Requests"],
   ["signature", "pen", "My E-Signature"],
   ["notifications", "bell", "Notifications"],
-  ["settings", "settings", "Profile & Settings"],
+  ["settings", "user", "Profile"],
 ];
 
 function getInitials(user: AuthenticatedUser) {
@@ -136,6 +136,7 @@ export function Shell({
 }: ShellProps) {
   const [menu, setMenu] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -183,7 +184,10 @@ export function Shell({
         navigate={navigate}
         open={menu}
         close={() => setMenu(false)}
-        onLogout={onLogout}
+        onLogout={() => {
+          setMenu(false);
+          setConfirmSignOut(true);
+        }}
         unreadCount={unreadCount}
       />
 
@@ -231,6 +235,21 @@ export function Shell({
 
         <div className="content">{children}</div>
       </main>
+
+      {confirmSignOut && (
+        <Modal title="Sign out?" close={() => setConfirmSignOut(false)}>
+          <p>Are you sure you want to sign out of your account?</p>
+
+          <div className="modal-actions">
+            <Button variant="secondary" onClick={() => setConfirmSignOut(false)}>
+              Cancel
+            </Button>
+            <Button icon="logout" onClick={onLogout}>
+              Sign out
+            </Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

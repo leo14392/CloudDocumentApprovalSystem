@@ -52,6 +52,7 @@ import {
 import { ReviewPage } from "./pages/review/ReviewPage";
 
 import { NotificationsPage, SignaturePage } from "./pages/account/AccountPages";
+import { SettingsPage } from "./pages/account/SettingsPage";
 
 function normalizeRequestStatus(status: string): Status {
   const validStatuses: Status[] = [
@@ -656,8 +657,8 @@ export default function App() {
   }
 
   if (page === "settings") {
-    title = "Profile & settings";
-    subtitle = "Manage your account preferences.";
+    title = "Profile";
+    subtitle = "View your profile and account information.";
   }
 
   const displayName = [user.givenName, user.middleName, user.familyName]
@@ -759,30 +760,7 @@ export default function App() {
         />
       )}
 
-      {page === "settings" && (
-        <section className="card settings-placeholder">
-          <div className="avatar large">
-            {user.givenName.charAt(0)}
-            {user.familyName.charAt(0)}
-          </div>
-
-          <h2>{displayName}</h2>
-          <p>{user.email}</p>
-
-          <div className="info-grid">
-            <Info label="University affiliation" value="MSU–IIT" />
-
-            <Info
-              label="Account role"
-              value={user.roles.join(", ") || "No assigned role"}
-            />
-
-            <Info label="Notification preference" value="Email and in-app" />
-
-            <Info label="Account status" value="Active" />
-          </div>
-        </section>
-      )}
+      {page === "settings" && <SettingsPage user={user} />}
     </Shell>
   );
 }
